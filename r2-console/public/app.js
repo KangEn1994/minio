@@ -80,7 +80,7 @@ async function init() {
     const data=await jsonRequest('/api/session');
     if (data?.authenticated) {
       state.authenticated=true; state.accessKey=data.accessKey || '';
-      showApp(); await loadBuckets();
+      showApp(); await loadBuckets(); applyRoute();
     } else showLogin();
   } catch (e) { showLogin(); $('login-error').textContent='无法连接服务器，请稍后重试。'; $('login-error').hidden=false; }
 }
@@ -93,24 +93,26 @@ function bindStaticEvents() {
     try {
       const data=await jsonRequest('/api/login',{method:'POST',json:{accessKey:key,secretKey:secret},noCsrf:true});
       state.authenticated=true; state.accessKey=data?.accessKey || key; state.csrf='';
-      $('secret-key').value=''; showApp(); await loadBuckets();
+      $('secret-key').value=''; showApp(); await loadBuckets(); applyRoute();
     } catch(e) { $('login-error').textContent=e.message; $('login-error').hidden=false; }
     finally { $('login-button').disabled=false; $('login-button').textContent='登录'; }
   });
   $('logout-button').addEventListener('click',async()=>{
     try { await jsonRequest('/api/logout',{method:'POST'}); } catch(e) { apiError(e); return; }
-    state.authenticated=false; state.csrf=''; state.buckets=[]; state.bucket=''; showLogin();
+    state.authenticated=false; state.csrf=''; state.buckets=[]; state.bucket='';
+    history.replaceState(null,'',location.pathname+location.search); showLogin();
   });
   $('nav-overview').addEventListener('click',()=>openOverview());
   $('sidebar-create').addEventListener('click',()=>openCreateBucket());
   $('menu-toggle').addEventListener('click',()=>{ const s=$('sidebar'); const open=s.classList.toggle('open'); $('menu-toggle').setAttribute('aria-expanded',String(open)); });
+  window.addEventListener('popstate',()=>{if(state.authenticated)applyRoute();});
   document.addEventListener('keydown',(e)=>{ if(e.key==='Escape') { if($('modal-root').firstChild) clear($('modal-root')); else closeSidebar(); } });
 }
 function showApp() { $('login-screen').hidden=true; $('app').hidden=false; $('account-label').textContent=state.accessKey; }
 function showLogin() { state.authenticated=false; $('login-screen').hidden=false; $('app').hidden=true; }
 function closeSidebar(){ $('sidebar').classList.remove('open'); $('menu-toggle').setAttribute('aria-expanded','false'); }
 async function loadBuckets(){
-  try { const data=await jsonRequest('/api/buckets'); state.buckets=Array.isArray(data?.buckets)?data.buckets:[]; renderNav(); if(state.bucket && !state.buckets.some(b=>b.name===state.bucket)) {state.bucket='';state.page='overview';} render(); }
+  try { const data=await jsonRequest('/api/buckets'); state.buckets=Array.isArray(data?.buckets)?data.buckets:[]; renderNav(); if(state.bucket && !state.buckets.some(b=>b.name===state.bucket)) {state.bucket='';state.page='overview';syncRoute(true);} render(); }
   catch(e){apiError(e); render();}
 }
 function renderNav(){
@@ -122,8 +124,33 @@ function renderNav(){
     nav.append(item);
   }
 }
-function openOverview(){ state.page='overview'; state.bucket=''; closeSidebar(); renderNav(); render(); }
-function openBucket(name){state.page='bucket';state.bucket=name;state.tab='objects';state.prefix='';state.filter='';state.selected.clear();state.lifecycleLoaded=false;state.lifecycleError='';closeSidebar();renderNav();render();loadObjects();}
+function syncRoute(replace=false){
+  const params=new URLSearchParams();
+  if(state.page==='bucket'&&state.bucket){
+    params.set('bucket',state.bucket);
+    if(state.tab==='settings')params.set('tab','settings');
+    if(state.prefix)params.set('prefix',state.prefix);
+    if(state.filter)params.set('filter',state.filter);
+  }
+  const next=location.pathname+location.search+(params.size?'#'+params.toString():'');
+  if(next!==location.pathname+location.search+location.hash)history[replace?'replaceState':'pushState'](null,'',next);
+}
+function applyRoute(){
+  const params=new URLSearchParams(location.hash.slice(1));
+  const bucket=params.get('bucket');
+  state.selected.clear();state.lifecycleLoaded=false;state.lifecycleError='';state.listVersion++;
+  if(!bucket||!state.buckets.some(item=>item.name===bucket)){
+    state.page='overview';state.bucket='';state.prefix='';state.filter='';
+    if(bucket)syncRoute(true);
+    renderNav();render();return;
+  }
+  state.page='bucket';state.bucket=bucket;state.tab=params.get('tab')==='settings'?'settings':'objects';
+  state.prefix=params.get('prefix')||'';state.filter=params.get('filter')||'';
+  closeSidebar();renderNav();render();
+  if(state.tab==='settings')loadLifecycle();else loadObjects();
+}
+function openOverview(){ state.page='overview'; state.bucket=''; closeSidebar();syncRoute();renderNav();render(); }
+function openBucket(name){state.page='bucket';state.bucket=name;state.tab='objects';state.prefix='';state.filter='';state.selected.clear();state.lifecycleLoaded=false;state.lifecycleError='';closeSidebar();syncRoute();renderNav();render();loadObjects();}
 function render(){
   const view=clear($('view')); $('topbar-path').textContent=state.page==='overview'?'概览':state.bucket;
   if(state.page==='overview') renderOverview(view);
@@ -156,7 +183,7 @@ function renderOverview(view){
 function statCard(label,value,note,icon){return node('div',{class:'stat-card'},node('div',{class:'stat-icon',text:icon,'aria-hidden':'true'}),node('div',{class:'stat-label',text:label}),node('div',{class:'stat-value',text:value}),node('div',{class:'stat-note',text:note}));}
 function renderBucket(view){
   view.append(pageHead('STORAGE / BUCKET',state.bucket,'管理此存储桶中的文件和配置。',state.tab==='objects'?[button('＋ 新建文件夹','',openCreateFolder),button('↑ 上传文件','primary',pickFiles)]:[]));
-  view.append(node('div',{class:'tabs'},node('button',{class:`tab ${state.tab==='objects'?'active':''}`,type:'button',on:{click:()=>{state.tab='objects';render();}}},'对象'),node('button',{class:`tab ${state.tab==='settings'?'active':''}`,type:'button',on:{click:()=>{state.tab='settings';render();loadLifecycle();}}},'设置')));
+  view.append(node('div',{class:'tabs'},node('button',{class:`tab ${state.tab==='objects'?'active':''}`,type:'button',on:{click:()=>{state.tab='objects';syncRoute();render();loadObjects();}}},'对象'),node('button',{class:`tab ${state.tab==='settings'?'active':''}`,type:'button',on:{click:()=>{state.tab='settings';syncRoute();render();loadLifecycle();}}},'设置')));
   if(state.tab==='objects') renderObjects(view); else renderSettings(view);
 }
 function renderObjects(view){
@@ -166,8 +193,8 @@ function renderObjects(view){
   for(const part of parts){ cumulative+=part+'/'; const target=cumulative; breadcrumb.append(node('span',{class:'breadcrumb-sep',text:'/','aria-hidden':'true'}),node('button',{class:target===state.prefix?'current':'',type:'button',on:{click:()=>navigatePrefix(target)}},part)); }
   view.append(breadcrumb);
   const search=node('input',{type:'search',placeholder:'按当前路径下的前缀筛选','aria-label':'按当前路径下的前缀筛选',value:state.filter});
-  const searchForm=node('form',{class:'search-field',on:{submit:(e)=>{e.preventDefault();state.filter=search.value;loadObjects();}}},node('span',{text:'⌕','aria-hidden':'true'}),search);
-  const toolbar=node('div',{class:'toolbar'},searchForm,button('筛选','',()=>{state.filter=search.value;loadObjects();}),state.filter?button('清除筛选','ghost',()=>{state.filter='';loadObjects();}):null,node('div',{class:'toolbar-spacer'}),state.selected.size?button(`删除选中 (${state.selected.size})`,'danger',deleteSelectedObjects):null,button('↻ 刷新','',()=>loadObjects()));
+  const searchForm=node('form',{class:'search-field',on:{submit:(e)=>{e.preventDefault();state.filter=search.value;syncRoute();loadObjects();}}},node('span',{text:'⌕','aria-hidden':'true'}),search);
+  const toolbar=node('div',{class:'toolbar'},searchForm,button('筛选','',()=>{state.filter=search.value;syncRoute();loadObjects();}),state.filter?button('清除筛选','ghost',()=>{state.filter='';syncRoute();loadObjects();}):null,node('div',{class:'toolbar-spacer'}),state.selected.size?button(`删除选中 (${state.selected.size})`,'danger',deleteSelectedObjects):null,button('↻ 刷新','',()=>loadObjects()));
   view.append(toolbar);
   if(state.filter) view.append(node('div',{class:'prefix-note',text:`前缀筛选：${state.prefix}${state.filter}。结果可能包含更深层的对象。`}));
   const panel=node('section',{class:'panel'}); panel.append(node('div',{class:'panel-heading'},node('h2',{text:'对象'}),node('span',{class:'hint',text:state.loading?'加载中…':`${state.prefixes.length} 个文件夹 · ${state.objects.length} 个对象${state.nextToken?'（可继续加载）':''}`})));
@@ -194,7 +221,7 @@ function renderObjects(view){
   view.append(panel);
 }
 function relativeName(value,prefix){return value.startsWith(prefix)?value.slice(prefix.length):value;}
-function navigatePrefix(prefix){state.prefix=prefix;state.filter='';state.selected.clear();render();loadObjects();}
+function navigatePrefix(prefix){state.prefix=prefix;state.filter='';state.selected.clear();syncRoute();render();loadObjects();}
 async function loadObjects(more=false){
   if(!state.bucket || state.tab!=='objects') return;
   const version=++state.listVersion, bucket=state.bucket, prefix=state.prefix+state.filter;
@@ -274,7 +301,7 @@ function openCreateBucket(){
 }
 async function deleteBucket(name){
   if(!await confirmDialog('删除存储桶',`确定删除“${name}”吗？存储桶必须为空。`,'删除存储桶',true))return;
-  try{await jsonRequest(`${storageUrl(name)}?deleteBucket=1`,{method:'DELETE'});showToast('存储桶已删除。','success');state.page='overview';state.bucket='';await loadBuckets();}
+  try{await jsonRequest(`${storageUrl(name)}?deleteBucket=1`,{method:'DELETE'});showToast('存储桶已删除。','success');state.page='overview';state.bucket='';state.prefix='';state.filter='';syncRoute(true);await loadBuckets();}
   catch(e){apiError(e);}
 }
 function openCreateFolder(){

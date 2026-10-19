@@ -45,7 +45,7 @@ cd r2-console
 npm test
 ```
 
-The included unit tests cover XML parsing, bucket validation, request signing shape and S3 error handling. For end-to-end verification, start a disposable MinIO server, create a uniquely named test bucket in the console, upload a file, download it and compare bytes, exercise multipart upload, lifecycle settings and deletion. Do not use production data for destructive tests.
+The default command runs unit and negative-security tests; the live integration test skips unless `MINIO_TEST_ENDPOINT`, `MINIO_ROOT_USER`, and `MINIO_ROOT_PASSWORD` are set. Set these only for a disposable, isolated MinIO instance, then run `npm test` again. The live test creates and deletes a random bucket, exercises multipart upload and lifecycle settings, and compares downloaded bytes. Never point it at production data.
 
 ## Security notes
 

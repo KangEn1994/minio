@@ -21,5 +21,6 @@ mkdir -p "$MINIO_DATA_DIR"
 "$MINIO_BIN" server "$MINIO_DATA_DIR" --address 127.0.0.1:9000 --console-address 127.0.0.1:9001 &
 minio_pid=$!
 trap 'kill "$minio_pid" 2>/dev/null || true' EXIT INT TERM
+unset MINIO_ROOT_USER MINIO_ROOT_PASSWORD
 export MINIO_ENDPOINT CONSOLE_HOST CONSOLE_PORT
 node "$SCRIPT_DIR/server.js"
