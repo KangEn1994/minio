@@ -92,6 +92,10 @@ export class S3Client {
   }
   async createBucket(bucket) { await this.request('PUT', bucket); }
   async deleteBucket(bucket) { await this.request('DELETE', bucket); }
+  async getBucketVersioning(bucket) {
+    const { xml } = await this.request('GET', bucket, '', { query: { versioning: '' } });
+    return value(xml, 'Status') || 'Unversioned';
+  }
   async listObjects(bucket, prefix = '', token = '') {
     const query = { 'list-type': 2, delimiter: '/', prefix, 'max-keys': 100 };
     if (token) query['continuation-token'] = token;
@@ -108,6 +112,11 @@ export class S3Client {
     return { key, size: Number(response.headers.get('content-length') || 0),
       contentType: response.headers.get('content-type') || '', etag: response.headers.get('etag') || '',
       lastModified: response.headers.get('last-modified') || '',
+      cacheControl: response.headers.get('cache-control') || '',
+      contentDisposition: response.headers.get('content-disposition') || '',
+      contentEncoding: response.headers.get('content-encoding') || '',
+      contentLanguage: response.headers.get('content-language') || '',
+      expires: response.headers.get('expires') || '',
       metadata: Object.fromEntries([...response.headers].filter(([k]) => k.startsWith('x-amz-meta-'))
         .map(([k, v]) => [k.slice('x-amz-meta-'.length), v])) };
   }
@@ -116,6 +125,33 @@ export class S3Client {
     await this.request('PUT', bucket, key, { body, headers: { 'content-type': contentType } });
   }
   async deleteObject(bucket, key) { await this.request('DELETE', bucket, key); }
+  async listRecursiveObjects(bucket, prefix, maxKeys = 100) {
+    const { xml } = await this.request('GET', bucket, '', { query: {
+      'list-type': 2, prefix, 'max-keys': maxKeys
+    } });
+    return { keys: children(xml, 'Contents').map(item => value(item, 'Key')),
+      truncated: value(xml, 'IsTruncated') === 'true' };
+  }
+  async getBucketStats(bucket, maxObjects = 10000) {
+    let count = 0, bytes = 0, token = '';
+    do {
+      const query = { 'list-type': 2, 'max-keys': Math.min(1000, maxObjects - count) };
+      if (token) query['continuation-token'] = token;
+      const { xml } = await this.request('GET', bucket, '', { query });
+      const objects = children(xml, 'Contents');
+      count += objects.length;
+      for (const item of objects) {
+        const size = Number(value(item, 'Size') || 0);
+        if (!Number.isSafeInteger(size) || size < 0 ||
+            !Number.isSafeInteger(bytes + size))
+          throw new S3Error('Bucket byte total exceeds the supported exact range', 422, 'StatsTooLarge');
+        bytes += size;
+      }
+      token = value(xml, 'NextContinuationToken');
+      if (token && !objects.length) throw new S3Error('MinIO returned an empty truncated object page');
+    } while (token && count < maxObjects);
+    return { objects: count, bytes, exact: !token, includesVersions: false };
+  }
   async createMultipart(bucket, key) {
     const { xml } = await this.request('POST', bucket, key, { query: { uploads: '' } });
     const uploadId = value(xml, 'UploadId');
@@ -140,21 +176,37 @@ export class S3Client {
   async abortMultipart(bucket, key, uploadId) {
     await this.request('DELETE', bucket, key, { query: { uploadId } });
   }
+  async listMultipartUploads(bucket, keyMarker = '', uploadIdMarker = '') {
+    const query = { uploads: '', 'max-uploads': 100 };
+    if (keyMarker) query['key-marker'] = keyMarker;
+    if (uploadIdMarker) query['upload-id-marker'] = uploadIdMarker;
+    const { xml } = await this.request('GET', bucket, '', { query });
+    return { uploads: children(xml, 'Upload').map(item => ({ key: value(item, 'Key'),
+      uploadId: value(item, 'UploadId'), initiated: value(item, 'Initiated') })),
+      nextKeyMarker: value(xml, 'NextKeyMarker') || null,
+      nextUploadIdMarker: value(xml, 'NextUploadIdMarker') || null,
+      hasMore: value(xml, 'IsTruncated') === 'true' };
+  }
   async getLifecycle(bucket) {
     try {
       const { xml } = await this.request('GET', bucket, '', { query: { lifecycle: '' } });
       return children(xml, 'Rule').map(rule => {
         const filter = child(rule, 'Filter');
         const expiration = child(rule, 'Expiration');
+        const days = value(expiration, 'Days');
+        const date = value(expiration, 'Date');
+        const parsedDate = /^\d{4}-\d{2}-\d{2}T00:00:00(?:\.000)?Z$/.test(date) ? date.slice(0, 10) : '';
         const supported = rule.children.every(item => ['ID', 'Status', 'Filter', 'Prefix', 'Expiration'].includes(item.name)) &&
           (!filter || filter.children.every(item => item.name === 'Prefix')) &&
-          expiration?.children.length === 1 && expiration.children[0].name === 'Days' &&
-          Number.isInteger(Number(value(expiration, 'Days'))) && Number(value(expiration, 'Days')) > 0;
+          expiration?.children.length === 1 && ['Days', 'Date'].includes(expiration.children[0].name) &&
+          (!days || Number.isInteger(Number(days)) && Number(days) > 0) &&
+          (!date || !!parsedDate);
         if (!supported) throw new S3Error('This bucket has lifecycle actions this console cannot safely edit',
           409, 'UnsupportedLifecycleConfiguration');
         return { id: value(rule, 'ID'), status: value(rule, 'Status'),
           prefix: value(filter, 'Prefix') || value(rule, 'Prefix'),
-          expirationDays: Number(value(expiration, 'Days')) };
+          ...(days ? { expirationDays: Number(days) } : {}),
+          ...(date ? { expirationDate: parsedDate } : {}) };
       });
     } catch (err) { if (err.code === 'NoSuchLifecycleConfiguration') return []; throw err; }
   }
@@ -165,15 +217,38 @@ export class S3Client {
     if (!rules.length) { await this.deleteLifecycle(bucket); return; }
     const xml = '<LifecycleConfiguration>' + rules.map(rule => `<Rule><ID>${xmlEscape(rule.id)}</ID>` +
       `<Status>${rule.status}</Status><Filter><Prefix>${xmlEscape(rule.prefix)}</Prefix></Filter>` +
-      `<Expiration><Days>${rule.expirationDays}</Days></Expiration></Rule>`).join('') + '</LifecycleConfiguration>';
+      (rule.expirationDays ? `<Expiration><Days>${rule.expirationDays}</Days></Expiration>` : '') +
+      (rule.expirationDate ? `<Expiration><Date>${rule.expirationDate}T00:00:00.000Z</Date></Expiration>` : '') +
+      '</Rule>').join('') + '</LifecycleConfiguration>';
     await this.request('PUT', bucket, '', { query: { lifecycle: '' }, body: xml,
       headers: { 'content-type': 'application/xml',
         'content-md5': crypto.createHash('md5').update(xml).digest('base64') } });
   }
   async deleteLifecycle(bucket) { await this.request('DELETE', bucket, '', { query: { lifecycle: '' } }); }
+  async getBucketPolicy(bucket) {
+    try {
+      const response = await this.request('GET', bucket, '', { query: { policy: '' }, raw: true });
+      const policy = JSON.parse(await response.text());
+      if (!policy || typeof policy !== 'object' || Array.isArray(policy))
+        throw new S3Error('MinIO returned an invalid bucket policy', 502, 'InvalidPolicyResponse');
+      return policy;
+    } catch (err) {
+      if (err.code === 'NoSuchBucketPolicy') return null;
+      if (err instanceof SyntaxError) throw new S3Error('MinIO returned an invalid bucket policy', 502, 'InvalidPolicyResponse');
+      throw err;
+    }
+  }
+  async putBucketPolicy(bucket, policy) {
+    await this.request('PUT', bucket, '', { query: { policy: '' }, body: JSON.stringify(policy),
+      headers: { 'content-type': 'application/json' } });
+  }
+  async deleteBucketPolicy(bucket) {
+    try { await this.request('DELETE', bucket, '', { query: { policy: '' } }); }
+    catch (err) { if (err.code !== 'NoSuchBucketPolicy') throw err; }
+  }
 }
 
 export function validateBucketName(name) {
   return typeof name === 'string' && name.length >= 3 && name.length <= 63 &&
-    /^[a-z0-9][a-z0-9-]*[a-z0-9]$/.test(name) && !/--/.test(name);
+    /^[a-z0-9][a-z0-9-]*[a-z0-9]$/.test(name);
 }

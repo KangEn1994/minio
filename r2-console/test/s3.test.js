@@ -5,8 +5,8 @@ import { S3Client, S3Error, validateBucketName } from '../s3.js';
 import { parseXml, value, xmlEscape } from '../xml.js';
 
 test('bucket names reject invalid and accept R2-style names', () => {
-  for (const name of ['abc', 'my-bucket', 'bucket1']) assert.ok(validateBucketName(name));
-  for (const name of ['ABCD', 'ab', '-bad', 'bad-', 'bad.name', 'bad--name', '../x'])
+  for (const name of ['abc', 'my-bucket', 'bucket1', 'bad--name']) assert.ok(validateBucketName(name));
+  for (const name of ['ABCD', 'ab', '-bad', 'bad-', 'bad.name', '../x'])
     assert.ok(!validateBucketName(name), name);
 });
 

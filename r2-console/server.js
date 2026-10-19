@@ -5,14 +5,19 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Readable } from 'node:stream';
 import { S3Client, S3Error, validateBucketName } from './s3.js';
+import { presignObject } from './presign.js';
+import { runAdminHelper, AdminError } from './admin.js';
+import { copyObject, replaceObjectMetadata } from './copy.js';
 
 const root = path.dirname(fileURLToPath(import.meta.url));
 const publicDir = path.join(root, 'public');
 const endpoint = process.env.MINIO_ENDPOINT || 'http://127.0.0.1:9000';
+const presignEndpoint = process.env.MINIO_PUBLIC_ENDPOINT || endpoint;
 const region = process.env.MINIO_REGION || 'us-east-1';
 const host = process.env.CONSOLE_HOST || '127.0.0.1';
 const port = Number(process.env.CONSOLE_PORT || 9090);
 const publicOrigin = process.env.CONSOLE_PUBLIC_ORIGIN || '';
+const adminHelperBin = process.env.MINIO_ADMIN_HELPER_BIN || '';
 if (publicOrigin && new URL(publicOrigin).pathname !== '/') throw new Error('CONSOLE_PUBLIC_ORIGIN must be an origin');
 if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('Invalid CONSOLE_PORT');
 if (host !== '127.0.0.1' && host !== '::1' && !publicOrigin) {
@@ -92,15 +97,61 @@ function validateRules(rules) {
   if (!Array.isArray(rules) || rules.length > 1000) fail(400, 'Expected up to 1000 lifecycle rules');
   const ids = new Set();
   for (const rule of rules) {
+    const hasAge = rule?.expirationDays !== undefined;
+    const hasDate = rule?.expirationDate !== undefined;
+    const validDays = day => Number.isInteger(day) && day >= 1 && day <= 36500;
+    const validDate = date => typeof date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(date) &&
+      !Number.isNaN(Date.parse(`${date}T00:00:00.000Z`)) &&
+      new Date(`${date}T00:00:00.000Z`).toISOString().slice(0, 10) === date;
     if (!rule || typeof rule.id !== 'string' || !rule.id || rule.id.length > 255 || ids.has(rule.id) ||
         !['Enabled', 'Disabled'].includes(rule.status) || typeof rule.prefix !== 'string' ||
-        !Number.isInteger(rule.expirationDays) || rule.expirationDays < 1 || rule.expirationDays > 36500) {
+        !(hasAge || hasDate) || hasAge && hasDate || rule.abortMultipartDays !== undefined ||
+        hasAge && !validDays(rule.expirationDays) || hasDate && !validDate(rule.expirationDate)) {
       fail(400, 'Invalid lifecycle rule');
     }
     ids.add(rule.id);
   }
 }
+function validatePolicy(policy) {
+  if (!policy || typeof policy !== 'object' || Array.isArray(policy) ||
+      !['2012-10-17', '2008-10-17'].includes(policy.Version)) fail(400, 'Invalid bucket policy version');
+  const statements = Array.isArray(policy.Statement) ? policy.Statement : [policy.Statement];
+  if (!statements.length || statements.length > 100) fail(400, 'Invalid bucket policy statements');
+  const strings = value => typeof value === 'string' && value.length > 0 ||
+    Array.isArray(value) && value.length > 0 && value.every(item => typeof item === 'string' && item.length > 0);
+  const hasWildcard = value => typeof value === 'string' ? value.includes('*') :
+    Array.isArray(value) ? value.some(hasWildcard) :
+    value && typeof value === 'object' ? Object.values(value).some(hasWildcard) : false;
+  for (const statement of statements) {
+    if (!statement || typeof statement !== 'object' || Array.isArray(statement) ||
+        !['Allow', 'Deny'].includes(statement.Effect) || !strings(statement.Action) ||
+        !strings(statement.Resource) ||
+        !(typeof statement.Principal === 'string' && statement.Principal ||
+          statement.Principal && typeof statement.Principal === 'object' && !Array.isArray(statement.Principal))) {
+      fail(400, 'Invalid bucket policy statement');
+    }
+    if (statement.Effect === 'Allow' && hasWildcard(statement.Principal) &&
+        (statement.NotAction !== undefined || statement.NotResource !== undefined ||
+          (Array.isArray(statement.Action) ? statement.Action : [statement.Action])
+            .some(action => action !== 's3:GetObject'))) {
+      fail(400, 'Anonymous access is limited to s3:GetObject; public writes and listing are unsupported', 'UnsafePublicPolicy');
+    }
+  }
+}
 function endpointInfo() { return { endpoint, region, cors: false }; }
+async function deletePrefixPage(s3, bucket, prefix) {
+  const versioning = await s3.getBucketVersioning(bucket);
+  if (versioning === 'Enabled' || versioning === 'Suspended')
+    fail(409, 'Recursive deletion is unavailable for versioned buckets because older versions would remain',
+      'VersionedBucketUnsupported');
+  const page = await s3.listRecursiveObjects(bucket, prefix, 100);
+  const failed = []; let deleted = 0;
+  for (const key of page.keys) {
+    try { await s3.deleteObject(bucket, key); deleted++; }
+    catch (err) { failed.push({ key, message: err.status >= 500 ? 'Storage service temporarily unavailable' : err.message }); }
+  }
+  return { deleted, failed, hasMore: page.truncated || failed.length > 0 };
+}
 
 async function routeApi(req, res, url) {
   originCheck(req);
@@ -147,6 +198,51 @@ async function routeApi(req, res, url) {
     return json(res, 200, { ok: true });
   }
   const s3 = new S3Client({ endpoint, region, accessKey: active.accessKey, secretKey: active.secretKey });
+  const adminBase = { endpoint, accessKey: active.accessKey, secretKey: active.secretKey };
+  if (route === '/api/admin/access-keys/capabilities' && method === 'GET') {
+    if (!adminHelperBin) return json(res, 200, { available: false,
+      reason: 'MinIO admin helper is not configured on this console' });
+    try {
+      await runAdminHelper(adminHelperBin, { ...adminBase, action: 'capabilities' });
+      return json(res, 200, { available: true });
+    } catch (err) {
+      return json(res, 200, { available: false, reason: err.message });
+    }
+  }
+  if (route === '/api/admin/access-keys' && method === 'GET') {
+    const result = await runAdminHelper(adminHelperBin, { ...adminBase, action: 'list' });
+    return json(res, 200, { accounts: result.accounts || [] });
+  }
+  if (route === '/api/admin/access-keys' && method === 'POST') {
+    const input = await readJson(req);
+    requireBucket(input?.bucket);
+    if (input.confirmBucket !== input.bucket) fail(400, 'Type the bucket name to confirm key creation');
+    if (typeof input.prefix !== 'string' || input.prefix &&
+        (!input.prefix.endsWith('/') || input.prefix.startsWith('/') ||
+          /[\u0000-\u001f\u007f]/.test(input.prefix) ||
+          input.prefix.split('/').some(part => part === '.' || part === '..') ||
+          Buffer.byteLength(input.prefix) > 1024)) fail(400, 'Invalid access-key prefix');
+    if (!Array.isArray(input.permissions) || !input.permissions.length ||
+        input.permissions.some(p => !['list', 'read', 'write', 'delete'].includes(p)))
+      fail(400, 'Invalid access-key permissions');
+    if (typeof input.expiresAt !== 'string' || !Number.isFinite(Date.parse(input.expiresAt)))
+      fail(400, 'Invalid access-key expiration');
+    const result = await runAdminHelper(adminHelperBin, { ...adminBase, action: 'create',
+      bucket: input.bucket, prefix: input.prefix, permissions: input.permissions,
+      expiresAt: input.expiresAt, name: input.name || '', description: input.description || '' });
+    return json(res, 201, { account: result.account, secretKey: result.secretKey, policy: result.policy });
+  }
+  const adminKeyMatch = route.match(/^\/api\/admin\/access-keys\/([^/]+)$/);
+  if (adminKeyMatch && method === 'DELETE') {
+    let targetAccessKey;
+    try { targetAccessKey = decodeURIComponent(adminKeyMatch[1]); }
+    catch { fail(400, 'Invalid access key'); }
+    if (!/^[A-Za-z0-9][A-Za-z0-9_-]{2,127}$/.test(targetAccessKey)) fail(400, 'Invalid access key');
+    const input = await readJson(req);
+    if (input?.confirmAccessKey !== targetAccessKey) fail(400, 'Type the access key to confirm revocation');
+    await runAdminHelper(adminHelperBin, { ...adminBase, action: 'revoke', targetAccessKey });
+    return json(res, 200, { ok: true });
+  }
   if (route === '/api/buckets' && method === 'GET') return json(res, 200, { buckets: await s3.listBuckets() });
   if (route === '/api/buckets' && method === 'POST') {
     const input = await readJson(req); requireBucket(input?.name);
@@ -161,6 +257,15 @@ async function routeApi(req, res, url) {
   if (!sub && method === 'DELETE') {
     if (url.searchParams.get('deleteBucket') !== '1') fail(400, 'Bucket deletion marker required');
     await s3.deleteBucket(bucket); return json(res, 200, { ok: true });
+  }
+  if (sub === 'stats' && method === 'GET') return json(res, 200, await s3.getBucketStats(bucket));
+  if (sub === 'empty' && method === 'DELETE')
+    return json(res, 200, await deletePrefixPage(s3, bucket, ''));
+  if (sub === 'prefix' && method === 'DELETE') {
+    const prefix = url.searchParams.get('prefix');
+    if (!prefix || !prefix.endsWith('/')) fail(400, 'Folder prefix must end in /');
+    requireKey(prefix);
+    return json(res, 200, await deletePrefixPage(s3, bucket, prefix));
   }
   if (sub === 'objects' && method === 'GET') {
     const prefix = url.searchParams.get('prefix') || '';
@@ -185,10 +290,83 @@ async function routeApi(req, res, url) {
     }
     if (method === 'DELETE') { await s3.deleteLifecycle(bucket); return json(res, 200, { rules: [] }); }
   }
+  if (sub === 'policy') {
+    if (method === 'GET') return json(res, 200, { policy: await s3.getBucketPolicy(bucket) });
+    if (method === 'PUT') {
+      const input = await readJson(req);
+      if (input?.confirmBucket !== bucket) fail(400, 'Type the bucket name to confirm policy changes');
+      validatePolicy(input.policy);
+      await s3.putBucketPolicy(bucket, input.policy);
+      return json(res, 200, { policy: await s3.getBucketPolicy(bucket) });
+    }
+    if (method === 'DELETE') {
+      await s3.deleteBucketPolicy(bucket);
+      return json(res, 200, { policy: await s3.getBucketPolicy(bucket) });
+    }
+  }
   if (sub === 'cors') {
     if (method === 'GET') return json(res, 200, { supported: false,
       message: 'MinIO Community Edition does not support per-bucket CORS through S3.' });
     fail(501, 'Per-bucket CORS is unsupported by MinIO Community Edition', 'NotImplemented');
+  }
+  if (sub === 'multipart-uploads') {
+    if (method === 'GET') {
+      const keyMarker = url.searchParams.get('keyMarker') || '';
+      const uploadIdMarker = url.searchParams.get('uploadIdMarker') || '';
+      if (Buffer.byteLength(keyMarker) > 1024 || uploadIdMarker.length > 1024)
+        fail(400, 'Invalid multipart upload pagination');
+      return json(res, 200, await s3.listMultipartUploads(bucket, keyMarker, uploadIdMarker));
+    }
+    if (method === 'DELETE') {
+      const key = url.searchParams.get('key');
+      const uploadId = url.searchParams.get('uploadId');
+      requireKey(key); requireUploadId(uploadId);
+      const input = await readJson(req);
+      if (input?.confirmUploadId !== uploadId) fail(400, 'Type the upload ID to confirm abort');
+      await s3.abortMultipart(bucket, key, uploadId);
+      return json(res, 200, { ok: true });
+    }
+  }
+  const shareMatch = sub.match(/^objects\/(.+)\/share$/);
+  if (shareMatch && method === 'POST') {
+    let key;
+    try { key = decodeURIComponent(shareMatch[1]); } catch { fail(400, 'Invalid object path'); }
+    requireKey(key);
+    const input = await readJson(req);
+    if (!['GET', 'PUT'].includes(input?.method) ||
+        !Number.isInteger(input?.expiresSeconds) || input.expiresSeconds < 60 || input.expiresSeconds > 3600)
+      fail(400, 'Invalid share method or expiry');
+    if (input.method === 'GET') await s3.headObject(bucket, key);
+    let signedUrl;
+    try {
+      signedUrl = presignObject({ endpoint: presignEndpoint, region, accessKey: active.accessKey,
+        secretKey: active.secretKey, bucket, key, method: input.method,
+        expiresSeconds: input.expiresSeconds });
+    } catch (err) {
+      if (err instanceof TypeError) fail(400, err.message);
+      throw err;
+    }
+    return json(res, 200, { url: signedUrl, method: input.method,
+      expiresAt: new Date(Date.now() + input.expiresSeconds * 1000).toISOString() });
+  }
+  const copyMatch = sub.match(/^objects\/(.+)\/copy$/);
+  if (copyMatch && method === 'POST') {
+    let key;
+    try { key = decodeURIComponent(copyMatch[1]); } catch { fail(400, 'Invalid object path'); }
+    requireKey(key);
+    const input = await readJson(req);
+    requireKey(input?.destinationKey);
+    await copyObject(s3, bucket, key, input.destinationKey);
+    return json(res, 201, await s3.headObject(bucket, input.destinationKey));
+  }
+  const metadataMatch = sub.match(/^objects\/(.+)\/metadata$/);
+  if (metadataMatch && method === 'PATCH') {
+    let key;
+    try { key = decodeURIComponent(metadataMatch[1]); } catch { fail(400, 'Invalid object path'); }
+    requireKey(key);
+    const input = await readJson(req);
+    await replaceObjectMetadata(s3, bucket, key, input?.patch);
+    return json(res, 200, await s3.headObject(bucket, key));
   }
   const objectMatch = sub.match(/^objects\/(.+)$/);
   if (objectMatch) {
@@ -277,7 +455,7 @@ const server = http.createServer(async (req, res) => {
     else await serveStatic(req, res, url);
   } catch (err) {
     if (res.headersSent) { res.destroy(err); return; }
-    const status = err instanceof HttpError || err instanceof S3Error ? err.status : 500;
+    const status = err instanceof HttpError || err instanceof S3Error || err instanceof AdminError ? err.status : 500;
     if (status >= 500) console.error(err);
     json(res, status, { error: err.code || 'InternalError',
       message: status >= 500 ? 'Storage service temporarily unavailable' : err.message });
