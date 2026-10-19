@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#0d1726">
+  <title>MinIO Storage</title>
+  <link rel="stylesheet" href="/styles.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <div id="app" class="app-shell">
+    <aside id="sidebar" class="sidebar" aria-label="主导航">
+      <div class="brand"><span class="brand-mark" aria-hidden="true"><span></span><span></span><span></span></span><span>MinIO <strong>Storage</strong></span></div>
+      <div class="sidebar-heading">工作区</div>
+      <nav class="main-nav" aria-label="主导航">
+        <button id="nav-overview" class="nav-item active" type="button"><span class="nav-icon" aria-hidden="true">▦</span><span>概览</span></button>
+      </nav>
+      <div class="sidebar-section-head"><span>存储桶</span><button id="sidebar-create" type="button" class="icon-button sidebar-add" title="创建存储桶" aria-label="创建存储桶">＋</button></div>
+      <nav id="bucket-nav" class="bucket-nav" aria-label="存储桶"></nav>
+      <div class="sidebar-bottom"><div class="connection-dot"></div><span>已连接至 MinIO</span></div>
+    </aside>
+
+    <main class="main-content">
+      <header class="topbar">
+        <button id="menu-toggle" type="button" class="icon-button menu-toggle" aria-label="打开导航菜单" aria-expanded="false">☰</button>
+        <div id="topbar-path" class="topbar-path">概览</div>
+        <div class="topbar-spacer"></div>
+        <span id="account-label" class="account-label"></span>
+        <button id="logout-button" type="button" class="button ghost small">退出登录</button>
+      </header>
+      <div id="view" class="view"></div>
+    </main>
+  </div>
+
+  <div id="login-screen" class="login-screen" hidden>
+    <div class="login-glow glow-one"></div><div class="login-glow glow-two"></div>
+    <div class="login-card">
+      <div class="login-brand"><span class="brand-mark" aria-hidden="true"><span></span><span></span><span></span></span><span>MinIO <strong>Storage</strong></span></div>
+      <h1>欢迎回来</h1>
+      <p class="muted">使用 MinIO 访问密钥管理您的存储空间。</p>
+      <form id="login-form">
+        <label for="access-key">Access Key</label>
+        <input id="access-key" name="accessKey" type="text" autocomplete="username" required spellcheck="false">
+        <label for="secret-key">Secret Key</label>
+        <input id="secret-key" name="secretKey" type="password" autocomplete="current-password" required>
+        <p id="login-error" class="form-error" role="alert" hidden></p>
+        <button id="login-button" class="button primary full" type="submit">登录</button>
+      </form>
+    </div>
+  </div>
+
+  <div id="modal-root"></div>
+  <div id="toast-root" class="toast-root" aria-live="polite"></div>
+</body>
+</html>

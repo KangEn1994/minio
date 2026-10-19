@@ -52,4 +52,6 @@ reorder-disks
 s3-check-md5
 s3-verify
 xattr
+r2-console/.env
+r2-console/minio-data/
 xl-meta
