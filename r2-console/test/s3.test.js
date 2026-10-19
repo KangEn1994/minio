@@ -65,3 +65,23 @@ test('signed object request preserves dot path segments', async () => {
     assert.equal(seen, '/bucket/a/../b');
   } finally { server.close(); }
 });
+
+test('unsupported lifecycle actions cannot be silently overwritten', async () => {
+  const requests = [];
+  const server = http.createServer((req, res) => {
+    requests.push(req.method);
+    res.writeHead(200, { 'content-type': 'application/xml' });
+    res.end('<LifecycleConfiguration><Rule><ID>existing</ID><Status>Enabled</Status>' +
+      '<Filter><Prefix>archive/</Prefix></Filter><Transition><Days>30</Days></Transition>' +
+      '</Rule></LifecycleConfiguration>');
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  try {
+    const client = new S3Client({ endpoint: `http://127.0.0.1:${server.address().port}`,
+      accessKey: 'key', secretKey: 'secret' });
+    await assert.rejects(client.putLifecycle('bucket',
+      [{ id: 'expire', status: 'Enabled', prefix: '', expirationDays: 30 }]),
+    err => err instanceof S3Error && err.code === 'UnsupportedLifecycleConfiguration');
+    assert.deepEqual(requests, ['GET']);
+  } finally { server.close(); }
+});

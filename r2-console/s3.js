@@ -143,12 +143,25 @@ export class S3Client {
   async getLifecycle(bucket) {
     try {
       const { xml } = await this.request('GET', bucket, '', { query: { lifecycle: '' } });
-      return children(xml, 'Rule').map(rule => ({ id: value(rule, 'ID'), status: value(rule, 'Status'),
-        prefix: value(child(rule, 'Filter'), 'Prefix') || value(rule, 'Prefix'),
-        expirationDays: Number(value(child(rule, 'Expiration'), 'Days') || 0) }));
+      return children(xml, 'Rule').map(rule => {
+        const filter = child(rule, 'Filter');
+        const expiration = child(rule, 'Expiration');
+        const supported = rule.children.every(item => ['ID', 'Status', 'Filter', 'Prefix', 'Expiration'].includes(item.name)) &&
+          (!filter || filter.children.every(item => item.name === 'Prefix')) &&
+          expiration?.children.length === 1 && expiration.children[0].name === 'Days' &&
+          Number.isInteger(Number(value(expiration, 'Days'))) && Number(value(expiration, 'Days')) > 0;
+        if (!supported) throw new S3Error('This bucket has lifecycle actions this console cannot safely edit',
+          409, 'UnsupportedLifecycleConfiguration');
+        return { id: value(rule, 'ID'), status: value(rule, 'Status'),
+          prefix: value(filter, 'Prefix') || value(rule, 'Prefix'),
+          expirationDays: Number(value(expiration, 'Days')) };
+      });
     } catch (err) { if (err.code === 'NoSuchLifecycleConfiguration') return []; throw err; }
   }
   async putLifecycle(bucket, rules) {
+    // Avoid silently discarding transition, retention or other lifecycle
+    // actions that are outside the UI's deliberately narrow editor.
+    await this.getLifecycle(bucket);
     if (!rules.length) { await this.deleteLifecycle(bucket); return; }
     const xml = '<LifecycleConfiguration>' + rules.map(rule => `<Rule><ID>${xmlEscape(rule.id)}</ID>` +
       `<Status>${rule.status}</Status><Filter><Prefix>${xmlEscape(rule.prefix)}</Prefix></Filter>` +
