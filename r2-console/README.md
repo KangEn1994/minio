@@ -11,12 +11,23 @@ A self-hosted, R2-inspired administration console for personal MinIO use. It is 
 - Delete a folder prefix or empty a bucket in 100-object steps with progress and explicit confirmation. Versioned buckets are blocked because ordinary deletion leaves versions or markers.
 - Create time-limited signed GET/PUT S3 URLs for individual objects. These grant bearer access for up to one hour. URLs use `MINIO_PUBLIC_ENDPOINT` when configured, otherwise `MINIO_ENDPOINT`, and work only where that S3 origin is reachable.
 - Read and manage S3 lifecycle expiration rules, with a read-back after save. These rules can automatically delete stored data, so check the prefix and age carefully.
-- Read, replace, and remove MinIO S3 bucket policies. The private preset removes the bucket policy; the public-read preset grants anonymous `s3:GetObject` only. Custom JSON policies require typed bucket-name confirmation, and anonymous write/list grants are rejected. Other IAM grants may still apply after a policy is removed.
+- Read, replace, and remove MinIO S3 bucket policies. The private preset removes the bucket policy; the public-read preset grants anonymous `s3:GetObject` only. Form-generated policies require typed bucket-name confirmation, and anonymous write/list grants are rejected. Other IAM grants may still apply after a policy is removed.
 - Manually list and abort incomplete multipart uploads from bucket settings. Automatic abort lifecycle rules are unsupported by this MinIO Community backend.
 - Optionally list, create and revoke bucket/prefix-scoped MinIO service accounts with the official MinIO admin-helper. This capability needs a MinIO identity authorized for service-account management. New keys expire and are shown once; revocation is permanent.
 - Show an honest unsupported state for per-bucket CORS. MinIO Community Edition exposes dummy S3 Bucket CORS handlers. Configure MinIO's server-wide CORS settings outside this console if needed.
 
 R2-specific public domains, Cloudflare metrics, billing, storage tiers, Queue-backed event notifications and Data Access Logs are deliberately absent. MinIO S3 Object Lock cannot reproduce R2's retroactive prefix locks. MinIO versioning and its delete-marker semantics are not presented as R2 features. The UI does not claim to replace the embedded MinIO Console in this version.
+
+## Visual policy and lifecycle editors
+
+Both settings panels are form-first. You do not need to write JSON:
+
+- Bucket policies: choose Allow/Deny and everyone or named users; toggle read/upload/list/delete operations; enter a resource prefix or resource ARNs. Add multiple statements, custom actions, conditions and typed advanced fields through controls. Common controls do not normalize imported data just by loading it. Advanced fields retain scalar/array forms, single-Statement objects, condition types and extension fields.
+- Lifecycle: add/remove rules, name each rule, choose enabled/disabled, set the object prefix, and choose expiration days or a UTC date. New rules default to disabled. Empty prefixes cover the entire bucket. This editor uses the console's `{ "rules": [...] }` format, not native S3 Lifecycle XML.
+- Import JSON reads a local file into a draft; it does not apply it. Invalid imports retain the current draft. Importing over changed work asks before replacing it. Export JSON and Copy JSON produce the current draft without changing any bucket. The generated JSON preview is read-only.
+- Check and Apply validates the draft, then uses the existing API and confirmation flow. Server readback replaces the applied draft. Refresh asks before discarding unsaved changes. Drafts are in memory, not durable browser storage; export before reloading or leaving the bucket.
+
+The UI is not a way around backend limits. `NotPrincipal`, `NotAction` and `NotResource` forms can be edited and exported, but the current console backend does not accept them for application. Unknown lifecycle fields are preserved for export and block application because the existing backend would otherwise drop them. Anonymous write/list access remains prohibited. Imported documents are limited to 1 MiB and 30 nesting levels; non-finite and unsafe integer numbers are rejected rather than silently changed. Export may contain a draft with validation errors: fix the displayed errors before importing it into a live service.
 
 ## Run locally
 

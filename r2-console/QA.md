@@ -1,5 +1,16 @@
 # Verification record
 
+## Visual editor update — 2026-10-20
+
+- `npm test`: 93 passed, 0 failed, 3 skipped. Live MinIO integration tests were not rerun in this environment; the three skips are explicit. The historical live run below is not evidence of a new live run.
+- Independent form/serialization tests cover typed JSON round trips, single/array statements, positive and exclusion fields, unknown lifecycle-field protection, malformed/oversized/deep/unsafe-number imports, date/day exclusivity, default-disabled rules, draft replacement cancellation, apply-in-flight locking, and stale asynchronous responses after navigation or newer reads.
+- Common permission controls and advanced-field synchronization tested. Packaging smoke test confirms `rule-editors.js` is included before `app.js` and served with JavaScript content type.
+- Actual cloud Chrome walkthrough against an isolated Python mock API: changed lifecycle prefix/days, switched to a UTC date, saw validation block an empty date, confirmed an enabled-rule save and server readback, imported a synthetic JSON file into the form, selected a named user and object prefix, verified generated policy JSON and downloaded its export. No real credentials or production buckets were used.
+- Screenshots of both form panels and downloaded synthetic JSON retained outside the repository. This verifies UI interaction, not live MinIO behavior.
+- Backend policy/security behavior is unchanged. Exclusion-mode policies are editable/exportable but blocked on Apply. Unsupported lifecycle fields are retained for export and explicitly blocked on Apply.
+
+## Historical verification — 2026-10-19
+
 Tested on a disposable, loopback-only MinIO instance using synthetic buckets and files. No production data was used.
 
 - `node --check public/app.js`, `node --check server.js`, `bash -n start-local.sh`, `git diff --check`: passed.

@@ -5,6 +5,7 @@ const state = {
   authenticated: false, accessKey: '', csrf: '', buckets: [],
   page: 'overview', bucket: '', tab: 'objects', prefix: '', filter: '', bucketFilter: '',
   objects: [], prefixes: [], nextToken: null, listVersion: 0, loading: false,
+  settingsEpoch:0, policyReadVersion:0, lifecycleReadVersion:0,
   lifecycleLoaded: false, lifecycle: null, lifecycleError: '',
   policyLoaded: false, policy: null, policyError: '',
   stats: null, statsError: '', statsLoading: false, statsVersion: 0,
@@ -145,6 +146,7 @@ function syncRoute(replace=false){
   if(next!==location.pathname+location.search+location.hash)history[replace?'replaceState':'pushState'](null,'',next);
 }
 function applyRoute(){
+  state.settingsEpoch++;
   const params=new URLSearchParams(location.hash.slice(1));
   const bucket=params.get('bucket');
   if(params.get('view')==='access-keys'){state.page='access-keys';state.bucket='';closeSidebar();renderNav();render();loadAccessKeyCapabilities();return;}
@@ -159,9 +161,9 @@ function applyRoute(){
   closeSidebar();renderNav();render();
   if(state.tab==='settings')loadSettings();else {loadObjects();loadBucketStats();}
 }
-function openOverview(){ state.page='overview'; state.bucket=''; closeSidebar();syncRoute();renderNav();render(); }
-function openAccessKeys(){state.page='access-keys';state.bucket='';closeSidebar();syncRoute();renderNav();render();loadAccessKeyCapabilities();}
-function openBucket(name){state.page='bucket';state.bucket=name;state.tab='objects';state.prefix='';state.filter='';state.selected.clear();state.lifecycleLoaded=false;state.lifecycleError='';state.policyLoaded=false;state.policyError='';state.stats=null;state.statsError='';state.statsVersion++;resetMultipartState();closeSidebar();syncRoute();renderNav();render();loadObjects();loadBucketStats();}
+function openOverview(){ state.settingsEpoch++; state.page='overview'; state.bucket=''; closeSidebar();syncRoute();renderNav();render(); }
+function openAccessKeys(){state.settingsEpoch++;state.page='access-keys';state.bucket='';closeSidebar();syncRoute();renderNav();render();loadAccessKeyCapabilities();}
+function openBucket(name){state.settingsEpoch++;state.page='bucket';state.bucket=name;state.tab='objects';state.prefix='';state.filter='';state.selected.clear();state.lifecycleLoaded=false;state.lifecycleError='';state.policyLoaded=false;state.policyError='';state.stats=null;state.statsError='';state.statsVersion++;resetMultipartState();closeSidebar();syncRoute();renderNav();render();loadObjects();loadBucketStats();}
 function render(){
   const view=clear($('view')); $('topbar-path').textContent=state.page==='overview'?'概览':state.page==='access-keys'?'访问密钥':state.bucket;
   if(state.page==='overview') renderOverview(view);
@@ -344,7 +346,7 @@ function renderOverview(view){
 function statCard(label,value,note,icon){return node('div',{class:'stat-card'},node('div',{class:'stat-icon',text:icon,'aria-hidden':'true'}),node('div',{class:'stat-label',text:label}),node('div',{class:'stat-value',text:value}),node('div',{class:'stat-note',text:note}));}
 function renderBucket(view){
   view.append(pageHead('STORAGE / BUCKET',state.bucket,'管理此存储桶中的文件和配置。',state.tab==='objects'?[button('＋ 新建文件夹','',openCreateFolder),button('↑ 上传文件','primary',pickFiles)]:[]));
-  view.append(node('div',{class:'tabs'},node('button',{class:`tab ${state.tab==='objects'?'active':''}`,type:'button',on:{click:()=>{state.tab='objects';syncRoute();render();loadObjects();if(!state.stats)loadBucketStats();}}},'对象'),node('button',{class:`tab ${state.tab==='settings'?'active':''}`,type:'button',on:{click:()=>{state.tab='settings';syncRoute();render();loadSettings();}}},'设置')));
+  view.append(node('div',{class:'tabs'},node('button',{class:`tab ${state.tab==='objects'?'active':''}`,type:'button',on:{click:()=>{state.settingsEpoch++;state.tab='objects';syncRoute();render();loadObjects();if(!state.stats)loadBucketStats();}}},'对象'),node('button',{class:`tab ${state.tab==='settings'?'active':''}`,type:'button',on:{click:()=>{state.settingsEpoch++;state.tab='settings';syncRoute();render();loadSettings();}}},'设置')));
   if(state.tab==='objects'){renderBucketStats(view);renderObjects(view);} else renderSettings(view);
 }
 function renderBucketStats(view){
@@ -439,12 +441,7 @@ async function loadObjects(more=false){
 function renderSettings(view){
   const grid=node('div',{class:'settings-grid'});
   grid.append(renderPolicySettings());
-  const lifecycle=node('section',{class:'settings-card'});
-  lifecycle.append(node('h2',{text:'生命周期规则'}),node('p',{text:'以 JSON 管理对象过期规则。每条规则包含 id、status、prefix，并设置 expirationDays（对象过期天数）或 expirationDate（过期日期），两者不能同时使用。当前 MinIO 服务端不支持 abortMultipartDays（清理未完成分片上传）。'}));
-  const status=node('div',{class:'settings-status',text:state.lifecycleError || (state.lifecycleLoaded?'已读取当前配置':'正在读取配置…')});
-  const editor=node('textarea',{class:'code-input','aria-label':'生命周期 JSON',spellcheck:'false',value:state.lifecycleLoaded?JSON.stringify(state.lifecycle||{rules:[]},null,2):'',disabled:!state.lifecycleLoaded});
-  lifecycle.append(editor,status,node('div',{class:'button-row'},button('移除规则','danger',()=>removeLifecycle(),{disabled:!state.lifecycleLoaded}),button('保存规则','primary',()=>saveLifecycle(editor),{disabled:!state.lifecycleLoaded})));
-  grid.append(lifecycle);
+  grid.append(renderLifecycleSettings());
   grid.append(renderMultipartPanel());
   grid.append(node('section',{class:'settings-card'},node('h2',{text:'CORS 配置'}),node('p',{text:'当前 MinIO 服务器不支持通过 S3 API 管理存储桶 CORS。'}),node('div',{class:'notice warn',text:'CORS 配置在此不可用。请在支持该功能的服务端或反向代理中配置跨域请求。'})));
   grid.append(node('section',{class:'settings-card danger-zone'},node('h2',{text:'危险操作'}),node('p',{text:'清空存储桶会递归删除全部对象，保留存储桶。删除存储桶仅适用于空存储桶。版本化存储桶不支持此处的批量清空。'}),node('div',{class:'policy-actions'},button('清空存储桶','danger',emptyBucketContents),button('删除存储桶','danger',()=>deleteBucket(state.bucket)))));
@@ -536,33 +533,60 @@ function policyLabel(policy,bucket){
     const resources=Array.isArray(s?.Resource)?s.Resource:[s?.Resource];
     if(s?.Effect==='Allow'&&publicPrincipal&&actions.length===1&&actions[0]==='s3:GetObject'&&resources.length===1&&resources[0]===`arn:aws:s3:::${bucket}/*`&&!s.Condition&&!s.NotAction&&!s.NotResource)return '公开读取（已识别）';
   }
-  return '已配置自定义策略，请审阅下方 JSON';
+  return '已配置自定义策略，请审阅下方规则';
+}
+// Keep drafts and DOM nodes across asynchronous settings renders; discard only on a new server document.
+const settingsEditors = { policy:null, lifecycle:null };
+function getSettingsEditor(kind) {
+  const source=state[kind], bucket=state.bucket;
+  let entry=settingsEditors[kind];
+  if(!entry||entry.bucket!==bucket||entry.source!==source) {
+    const options={bucket,
+      confirmReplace:()=>confirmDialog('替换未应用的草稿','导入文件将替换此编辑器中的未应用更改，不会修改服务端。','替换草稿'),
+      onApply:config=>kind==='policy'?savePolicyJson({value:JSON.stringify(config),isVisual:true}):saveLifecycle({value:JSON.stringify(config),isVisual:true})};
+    const editor=kind==='policy'?RuleEditors.createPolicyEditor(source||{Version:'2012-10-17',Statement:[]},options):RuleEditors.createLifecycleEditor(source||{rules:[]},options);
+    entry={bucket,source,editor};settingsEditors[kind]=entry;
+  }
+  return entry.editor;
 }
 function renderPolicySettings(){
   const card=node('section',{class:'settings-card'});
-  card.append(node('h2',{text:'存储桶权限'}),node('p',{text:'管理此存储桶的 MinIO S3 存储桶策略。更改策略可能影响对象的可访问性。'}));
+  card.append(node('h2',{text:'存储桶权限'}),node('p',{text:'用规则表单管理访问主体、操作、资源和条件，自动生成 MinIO S3 策略 JSON。'}));
   const status=state.policyError?`读取失败：${state.policyError}`:!state.policyLoaded?'正在读取当前策略…':policyLabel(state.policy,state.bucket);
-  card.append(node('div',{class:'policy-status',text:status}),node('div',{class:'notice warn',text:'公开读取会让任何知道对象地址的人无需登录即可读取对象。私有预设会移除存储桶策略，但其他 IAM 权限仍可能允许访问。'}));
-  const editor=node('textarea',{class:'code-input policy-editor','aria-label':'当前存储桶策略 JSON',spellcheck:'false',placeholder:'在此粘贴存储桶策略 JSON',value:state.policyLoaded&&state.policy?JSON.stringify(state.policy,null,2):'',disabled:!state.policyLoaded});
-  card.append(node('label',{class:'policy-editor-label',text:'当前策略 JSON'}),editor);
-  card.append(node('div',{class:'policy-actions'},
-    button('刷新策略','',()=>loadPolicy(true)),
-    button('私有预设','',applyPrivatePolicy,{disabled:!state.policyLoaded||!state.policy}),
-    button('公开读取预设','danger',applyPublicReadPolicy,{disabled:!state.policyLoaded}),
-    button('保存 JSON 策略','primary',()=>savePolicyJson(editor),{disabled:!state.policyLoaded})));
+  card.append(node('div',{class:'policy-status',text:status}),node('div',{class:'notice warn',text:'公开读取会让任何知道对象地址的人无需登录即可读取对象。移除策略不代表撤销其他 IAM 授权。'}));
+  card.append(node('div',{class:'policy-actions'},button('刷新策略','',async()=>{
+    if(state.policyLoaded&&getSettingsEditor('policy').isDirty()&&!await confirmDialog('放弃未应用更改','刷新将用服务端配置替换当前策略草稿。','放弃并刷新'))return;
+    settingsEditors.policy=null;await loadPolicy(true);
+  }),button('移除策略','danger',applyPrivatePolicy,{disabled:!state.policyLoaded||!state.policy}),button('填入公开读取预设','',async()=>{
+    const editor=getSettingsEditor('policy');
+    if(editor.isDirty()&&!await confirmDialog('替换策略草稿','公开读取预设将替换草稿；确认应用前不会更改权限。','替换草稿'))return;
+    editor.setValue(publicReadPolicy(state.bucket));
+  },{disabled:!state.policyLoaded})));
+  if(state.policyLoaded)card.append(getSettingsEditor('policy').element);
   return card;
 }
-async function loadSettings(){await loadLifecycle();await loadPolicy();await loadMultipartUploads();}
+function renderLifecycleSettings(){
+  const card=node('section',{class:'settings-card'});
+  card.append(node('h2',{text:'生命周期规则'}),node('p',{text:'逐条设置对象过期范围、启用状态和时间。新规则默认停用；应用已启用规则后，符合条件的数据可能被自动删除。'}),node('div',{class:'notice',text:'当前 MinIO 后端支持按前缀匹配、按天数或日期过期；不支持自动清理分片等其他动作。未知字段会保留导出，但阻止应用，避免静默丢失配置。'}));
+  card.append(node('div',{class:'settings-status',text:state.lifecycleError||(!state.lifecycleLoaded?'正在读取配置…':'')}));
+  card.append(node('div',{class:'policy-actions'},button('刷新规则','',async()=>{
+    if(state.lifecycleLoaded&&getSettingsEditor('lifecycle').isDirty()&&!await confirmDialog('放弃未应用更改','刷新将用服务端配置替换生命周期草稿。','放弃并刷新'))return;
+    settingsEditors.lifecycle=null;state.lifecycleLoaded=false;await loadLifecycle();
+  }),button('移除所有规则','danger',removeLifecycle,{disabled:!state.lifecycleLoaded})));
+  if(state.lifecycleLoaded)card.append(getSettingsEditor('lifecycle').element);
+  return card;
+}
+async function loadSettings(){const bucket=state.bucket,epoch=state.settingsEpoch;await loadLifecycle();if(bucket!==state.bucket||epoch!==state.settingsEpoch)return;await loadPolicy();if(bucket!==state.bucket||epoch!==state.settingsEpoch)return;await loadMultipartUploads();}
 async function loadPolicy(force=false){
   if(state.policyLoaded&&!force)return true;
   if(state.tab!=='settings'||!state.bucket)return false;
-  const bucket=state.bucket;state.policyError='';if(force)state.policyLoaded=false;render();
+  const bucket=state.bucket,epoch=state.settingsEpoch,version=++state.policyReadVersion;state.policyError='';if(force)state.policyLoaded=false;render();
   try{
     const data=await jsonRequest(policyUrl(bucket));
-    if(bucket!==state.bucket||state.tab!=='settings')return false;
+    if(bucket!==state.bucket||state.tab!=='settings'||epoch!==state.settingsEpoch||version!==state.policyReadVersion)return false;
     state.policy=data?.policy||null;state.policyLoaded=true;
   }catch(e){
-    if(bucket!==state.bucket||state.tab!=='settings')return false;
+    if(bucket!==state.bucket||state.tab!=='settings'||epoch!==state.settingsEpoch||version!==state.policyReadVersion)return false;
     if(e.status===404){state.policy=null;state.policyLoaded=true;}
     else{state.policyError=e.message;apiError(e);}
   }
@@ -582,55 +606,57 @@ async function typedPolicyConfirmation(bucket,title,description,actionLabel){
   });
 }
 async function applyPublicReadPolicy(){
-  const bucket=state.bucket;
+  const bucket=state.bucket,epoch=state.settingsEpoch;
   const ok=await typedPolicyConfirmation(bucket,'启用公开读取',`将替换 ${bucket} 当前的存储桶策略。任何人都可能无需登录读取该存储桶中的对象。`,'启用公开读取');
-  if(!ok||bucket!==state.bucket)return;
-  try{await jsonRequest(policyUrl(bucket),{method:'PUT',json:{policy:publicReadPolicy(bucket),confirmBucket:bucket}});const verified=await loadPolicy(true);showToast(verified?'公开读取策略已保存并重新读取。':'公开读取策略已提交，但无法读取最新配置。',verified?'success':'error');}
+  if(!ok||bucket!==state.bucket||epoch!==state.settingsEpoch)return;
+  try{await jsonRequest(policyUrl(bucket),{method:'PUT',json:{policy:publicReadPolicy(bucket),confirmBucket:bucket}});if(bucket!==state.bucket||epoch!==state.settingsEpoch){showToast(`已更新 ${bucket} 的策略。`,'success');return;}const verified=await loadPolicy(true);showToast(verified?'公开读取策略已保存并重新读取。':'公开读取策略已提交，但无法读取最新配置。',verified?'success':'error');}
   catch(e){apiError(e);}
 }
 async function applyPrivatePolicy(){
-  const bucket=state.bucket;
+  const bucket=state.bucket,epoch=state.settingsEpoch;
   if(!await confirmDialog('移除存储桶策略',`确定移除 ${bucket} 当前的存储桶策略吗？这会撤销通过该策略授予的权限；其他 IAM 授权可能仍然有效。`,'移除策略',true))return;
-  if(bucket!==state.bucket)return;
-  try{await jsonRequest(policyUrl(bucket),{method:'DELETE'});const verified=await loadPolicy(true);showToast(verified?'存储桶策略已移除并重新读取。':'存储桶策略已移除，但无法读取最新配置。',verified?'success':'error');}
+  if(bucket!==state.bucket||epoch!==state.settingsEpoch)return;
+  try{await jsonRequest(policyUrl(bucket),{method:'DELETE'});if(bucket!==state.bucket||epoch!==state.settingsEpoch){showToast(`已更新 ${bucket} 的策略。`,'success');return;}const verified=await loadPolicy(true);showToast(verified?'存储桶策略已移除并重新读取。':'存储桶策略已移除，但无法读取最新配置。',verified?'success':'error');}
   catch(e){apiError(e);}
 }
 async function savePolicyJson(editor){
-  const bucket=state.bucket;let policy;
+  const bucket=state.bucket,epoch=state.settingsEpoch;let policy;
   try{policy=JSON.parse(editor.value);}catch(e){showToast('策略 JSON 格式不正确。','error');return;}
-  if(!policy||typeof policy!=='object'||Array.isArray(policy)||!Array.isArray(policy.Statement)){showToast('策略需要包含 Statement 数组。','error');return;}
-  if(!await typedPolicyConfirmation(bucket,'保存存储桶策略',`将使用编辑框中的 JSON 替换 ${bucket} 当前的策略。错误或过宽的权限可能公开对象。`,'保存策略'))return;
-  if(bucket!==state.bucket)return;
-  try{await jsonRequest(policyUrl(bucket),{method:'PUT',json:{policy,confirmBucket:bucket}});const verified=await loadPolicy(true);showToast(verified?'存储桶策略已保存并重新读取。':'存储桶策略已提交，但无法读取最新配置。',verified?'success':'error');}
+  const policyErrors=RuleEditors.validatePolicyForApply(policy);if(policyErrors.length){showToast(policyErrors.join(' '),'error');return;}
+  if(!await typedPolicyConfirmation(bucket,'保存存储桶策略',`将使用表单自动生成的 JSON 替换 ${bucket} 当前的策略。错误或过宽的权限可能公开对象。`,'保存策略'))return;
+  if(bucket!==state.bucket||epoch!==state.settingsEpoch)return;
+  try{await jsonRequest(policyUrl(bucket),{method:'PUT',json:{policy,confirmBucket:bucket}});if(bucket!==state.bucket||epoch!==state.settingsEpoch){showToast(`已更新 ${bucket} 的策略。`,'success');return;}const verified=await loadPolicy(true);showToast(verified?'存储桶策略已保存并重新读取。':'存储桶策略已提交，但无法读取最新配置。',verified?'success':'error');}
   catch(e){apiError(e);}
 }
 async function loadLifecycle(){
   if(state.lifecycleLoaded || state.tab!=='settings') return;
-  const bucket=state.bucket; state.lifecycleError='';
-  try { const data=await jsonRequest(storageUrl(bucket,'/lifecycle')); if(bucket!==state.bucket) return; state.lifecycle=data || {rules:[]}; state.lifecycleLoaded=true; }
-  catch(e){if(bucket!==state.bucket)return; if(e.status===404){state.lifecycle={rules:[]};state.lifecycleLoaded=true;}else{state.lifecycleError=e.message;apiError(e);}}
+  const bucket=state.bucket,epoch=state.settingsEpoch,version=++state.lifecycleReadVersion; state.lifecycleError='';
+  try { const data=await jsonRequest(storageUrl(bucket,'/lifecycle')); if(bucket!==state.bucket||epoch!==state.settingsEpoch||version!==state.lifecycleReadVersion||state.tab!=='settings') return; state.lifecycle=data || {rules:[]}; state.lifecycleLoaded=true; }
+  catch(e){if(bucket!==state.bucket||epoch!==state.settingsEpoch||version!==state.lifecycleReadVersion||state.tab!=='settings')return; if(e.status===404){state.lifecycle={rules:[]};state.lifecycleLoaded=true;}else{state.lifecycleError=e.message;apiError(e);}}
   render();
 }
 async function saveLifecycle(editor){
-  const bucket=state.bucket;
+  const bucket=state.bucket,epoch=state.settingsEpoch;
   let config; try{config=JSON.parse(editor.value);}catch(e){showToast('JSON 格式不正确，请检查语法。','error');return;}
   if(!config || typeof config!=='object' || Array.isArray(config) || !Array.isArray(config.rules)){showToast('配置需要包含 rules 数组。','error');return;}
+  if(editor.isVisual){const errors=RuleEditors.validateLifecycle(config);if(errors.length){showToast(errors.join(' '),'error');return;}}
   if(config.rules.some(rule=>rule&&Object.prototype.hasOwnProperty.call(rule,'abortMultipartDays'))){showToast('当前 MinIO 服务端不支持 abortMultipartDays，请移除后再保存。','error');return;}
   if(config.rules.some(rule=>rule?.status==='Enabled')){
-    if(!await confirmDialog('确认自动删除规则','启用后，MinIO 将自动删除匹配前缀且超过指定天数的对象。请确认规则范围与天数。','确认保存',true))return;
+    if(!await confirmDialog('确认自动删除规则','启用后，MinIO 将自动删除匹配前缀且已到过期天数或日期的对象。空前缀匹配整个桶；请核对范围和时间。','确认保存',true))return;
   }
-  if(bucket!==state.bucket)return;
+  if(bucket!==state.bucket||epoch!==state.settingsEpoch)return;
   try {
     const saved=await jsonRequest(storageUrl(bucket,'/lifecycle'),{method:'PUT',json:config});
     if(!Array.isArray(saved?.rules))throw new Error('服务器未返回已保存规则，请刷新确认。');
-    if(bucket===state.bucket){state.lifecycle=saved;state.lifecycleLoaded=true;editor.value=JSON.stringify(saved,null,2);}
+    if(bucket===state.bucket&&epoch===state.settingsEpoch){state.lifecycle=saved;state.lifecycleLoaded=true;editor.value=JSON.stringify(saved,null,2);if(editor.isVisual)render();}
     showToast('生命周期规则已保存并读取服务器配置。','success');
   }catch(e){apiError(e);}
 }
 async function removeLifecycle(){
-  const bucket=state.bucket;
+  const bucket=state.bucket,epoch=state.settingsEpoch;
   if(!await confirmDialog('移除生命周期规则',`确定移除 ${bucket} 的所有生命周期规则吗？`,'移除规则',true))return;
-  try{await jsonRequest(storageUrl(bucket,'/lifecycle'),{method:'DELETE'});state.lifecycle={rules:[]};state.lifecycleLoaded=true;render();showToast('生命周期规则已移除。','success');}catch(e){apiError(e);}
+  if(bucket!==state.bucket||epoch!==state.settingsEpoch)return;
+  try{await jsonRequest(storageUrl(bucket,'/lifecycle'),{method:'DELETE'});if(bucket!==state.bucket||epoch!==state.settingsEpoch){showToast(`已移除 ${bucket} 的生命周期规则。`,'success');return;}state.lifecycle={rules:[]};state.lifecycleLoaded=true;render();showToast('生命周期规则已移除。','success');}catch(e){apiError(e);}
 }
 function modalBase(title,description){
   clear($('modal-root'));

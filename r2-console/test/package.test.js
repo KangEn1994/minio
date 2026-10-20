@@ -46,7 +46,14 @@ test('Dockerfile runtime file layout starts and serves the console', { timeout: 
     assert.equal((await session.json()).authenticated, false);
     const index = await fetch(`http://127.0.0.1:${port}/`);
     assert.equal(index.status, 200);
-    assert.match(await index.text(), /MinIO Storage/);
+    const html = await index.text();
+    assert.match(html, /MinIO Storage/);
+    assert.ok(html.indexOf('/rule-editors.js') >= 0, 'Editor module must be included');
+    assert.ok(html.indexOf('/rule-editors.js') < html.indexOf('/app.js'), 'Editor module must load before app');
+    const editor = await fetch(`http://127.0.0.1:${port}/rule-editors.js`);
+    assert.equal(editor.status, 200);
+    assert.match(editor.headers.get('content-type'), /javascript/);
+    assert.match(await editor.text(), /RuleEditors/);
   } finally {
     if (child) {
       if (child.exitCode === null) {

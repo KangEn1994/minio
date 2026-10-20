@@ -22,3 +22,40 @@
 .multipart-notice{margin-top:13px}.multipart-loading{margin-top:14px}.multipart-table{margin-top:14px;border:1px solid #e8edf2;border-radius:7px}.multipart-table .mono-cell{max-width:310px;word-break:break-all}
 
 .object-detail-actions{flex-wrap:wrap}.metadata-json{min-height:95px!important;font-family:ui-monospace,SFMono-Regular,Menlo,monospace!important}
+
+/* Visual policy and lifecycle rule builders */
+.visual-rule-editor { margin-top:20px; }
+.rule-form { display:flex; flex-direction:column; gap:16px; }
+.rule-card { border:1px solid var(--border,#dce4ec); border-radius:12px; padding:20px; background:#fbfcfe; }
+.rule-card-head { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:16px; }
+.rule-card h3 { font-size:15px; margin:0; }
+.rule-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:16px; }
+.rule-field { display:flex; flex-direction:column; gap:7px; margin:10px 0; min-width:0; }
+.rule-label { font-size:13px; font-weight:600; color:#42566d; }
+.visual-rule-editor input, .visual-rule-editor select { width:100%; min-width:0; border:1px solid #cedae6; border-radius:7px; background:#fff; padding:10px 11px; color:#233b50; font:inherit; font-size:13px; }
+.visual-rule-editor input:focus, .visual-rule-editor select:focus { outline:2px solid #da7b40; outline-offset:1px; }
+.structured-value { display:flex; flex-wrap:wrap; align-items:flex-start; gap:8px; min-width:0; flex:1; }
+.structured-value > input, .structured-value > select:not(.type-select) { flex:1; min-width:120px; }
+.structured-value > .type-select { width:112px; flex:none; }
+.structured-rows { display:flex; flex-direction:column; gap:10px; width:100%; padding-left:12px; border-left:2px solid #dee7ef; }
+.structured-row { display:flex; flex-wrap:wrap; gap:8px; align-items:flex-start; }
+.structured-key { width:100%; font-size:12px; font-weight:600; overflow-wrap:anywhere; }
+.structured-add { display:flex; gap:8px; width:100%; flex-wrap:wrap; }
+.structured-add > input { flex:1; min-width:180px; }
+.rule-shortcuts, .rule-toolbar { display:flex; gap:8px; flex-wrap:wrap; margin:12px 0; }
+.rule-toolbar { padding-top:14px; border-top:1px solid #e3eaf1; }
+.rule-advanced, .json-preview { margin-top:16px; border:1px solid #dde6ee; border-radius:8px; padding:12px; background:#fff; }
+.rule-advanced summary, .json-preview summary { cursor:pointer; font-size:13px; font-weight:600; color:#405970; }
+.generated-json { margin-top:12px; min-height:180px; max-height:360px; background:#f6f8fb; }
+.rule-validation { margin:14px 0; font-size:12px; color:#65788e; line-height:1.7; }
+.rule-validation .form-error { margin-top:5px; }
+.rule-empty { color:#738398; padding:18px; border:1px dashed #cad7e4; border-radius:8px; }
+@media(max-width:640px) { .rule-grid{grid-template-columns:1fr;} .rule-card{padding:12px;} .structured-rows{padding-left:6px;} .rule-card-head{align-items:flex-start;} }
+.rule-form { border:0; padding:0; margin:0; min-width:0; }
+.rule-form:disabled { opacity:.65; }
+.simple-value-row { display:flex; gap:10px; align-items:center; }
+.simple-value-row > .rule-field { flex:1; }
+.permission-options { display:flex; flex-wrap:wrap; gap:8px; margin:10px 0; }
+.permission-options .selected { color:#a95220; border-color:#db8a52; background:#fff3e9; }
+.rule-shortcuts > .rule-field { margin:0; min-width:180px; flex:1; }
+@media(max-width:640px) { .simple-value-row{align-items:flex-end;} }
