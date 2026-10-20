@@ -59,3 +59,30 @@
 .permission-options .selected { color:#a95220; border-color:#db8a52; background:#fff3e9; }
 .rule-shortcuts > .rule-field { margin:0; min-width:180px; flex:1; }
 @media(max-width:640px) { .simple-value-row{align-items:flex-end;} }
+
+/* Bucket settings: task-oriented navigation with one visible work area. */
+.settings-layout{display:grid;grid-template-columns:minmax(205px,235px) minmax(0,1fr);gap:22px;align-items:start}
+.settings-nav{position:sticky;top:84px;background:#fff;border:1px solid #e3eaf1;border-radius:10px;padding:9px;box-shadow:0 4px 17px rgba(25,47,67,.025)}
+.settings-nav-heading{padding:11px 12px 9px;color:#8494a5;font-size:10px;font-weight:750;letter-spacing:.1em;text-transform:uppercase}
+.settings-nav-item{display:flex;flex-direction:column;gap:4px;padding:12px;border:1px solid transparent;border-radius:8px;color:#36506a;text-decoration:none;line-height:1.35;min-width:0}
+.settings-nav-item:hover{background:#f6f9fb;color:#213b53}.settings-nav-item.active{background:#fff4eb;border-color:#f0d9c6;color:#a7501e}
+.settings-nav-item-title{font-size:13px;font-weight:700}.settings-nav-item-summary{font-size:11px;color:#8191a1;overflow-wrap:anywhere}
+.settings-nav-item.active .settings-nav-item-summary{color:#ad7451}.settings-nav-item.danger{margin-top:8px;border-top:1px solid #f0e3e3;color:#ad4a4a}
+.settings-nav-item.danger.active{background:#fff4f4;border-color:#edcfcf}.settings-nav-item.danger.active .settings-nav-item-summary{color:#a56767}
+.settings-panel{min-width:0}.settings-panel .settings-card{max-width:none}.settings-panel .visual-rule-editor{margin-top:20px}
+@media(max-width:850px){.settings-layout{grid-template-columns:1fr;gap:14px}.settings-nav{position:static;display:flex;overflow-x:auto;gap:7px;padding:8px}.settings-nav-heading{display:none}.settings-nav-item{flex:0 0 154px;padding:10px}.settings-nav-item.danger{margin-top:0;border-top-color:transparent}}
+@media(max-width:560px){.settings-nav-item{flex-basis:144px}.settings-panel .settings-card{padding:16px}}
+
+.rule-intro{font-size:11px;color:#708295;margin:0 0 9px}.rule-intro summary{cursor:pointer}.rule-intro .notice{margin-top:8px}
+.settings-help{font-size:11px;color:#708295;margin:-5px 0 14px}.settings-help summary{cursor:pointer}.settings-help .notice{margin-top:8px}
+.visual-rule-editor .rule-toolbar{position:sticky;top:8px;z-index:7;align-items:center;margin:0 0 9px;padding:10px 12px;border:1px solid #e0e8ee;border-radius:9px;background:rgba(255,255,255,.97);box-shadow:0 5px 18px rgba(22,46,66,.08);backdrop-filter:blur(8px)}
+.rule-save-state{font-size:11px;font-weight:700;color:#a76632;margin-right:auto;white-space:nowrap}.visual-rule-editor .rule-toolbar .button{min-height:31px}
+.rule-data-tools{font-size:11px;color:#708295;margin:0 0 11px}.rule-data-tools summary{cursor:pointer}.rule-data-actions{display:flex;gap:7px;flex-wrap:wrap;margin-top:9px}.rule-data-actions .button{min-height:31px}
+.rule-picker{border:1px solid #e0e8ee;border-radius:9px;background:#fff;overflow:hidden;margin:0 0 3px}
+.rule-picker-heading{display:flex;align-items:center;justify-content:space-between;gap:9px;padding:12px 15px;background:#f6f9fb;border-bottom:1px solid #e7edf2;font-size:11px;color:#708398}
+.rule-picker-heading strong{font-size:12px;color:#314a61}.rule-picker-item{display:flex;flex-direction:column;align-items:flex-start;gap:3px;width:100%;text-align:left;border:0;border-left:3px solid transparent;border-bottom:1px solid #edf1f4;background:#fff;color:#2d4257;padding:12px 14px;cursor:pointer}
+.rule-picker-item:last-child{border-bottom:0}.rule-picker-item:hover{background:#f8fafc}.rule-picker-item.active{background:#fff6ef;border-left-color:#d9783d}
+.rule-picker-name{font-weight:700;font-size:12px;overflow-wrap:anywhere}.rule-picker-summary{font-size:11px;color:#778a9c;overflow-wrap:anywhere}.rule-picker-item.active .rule-picker-name{color:#ab5b2b}
+.rule-picker .rule-empty{margin:11px;border-style:dashed}.rule-card-kicker{font-size:10px;color:#8999a8;margin-bottom:4px;text-transform:uppercase;letter-spacing:.07em}
+.rule-card-actions{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}.rule-card-head h3{overflow-wrap:anywhere}
+@media(max-width:680px){.visual-rule-editor .rule-toolbar{position:static}.rule-save-state{width:100%}.rule-card-head{flex-wrap:wrap}.rule-card-actions{width:100%;justify-content:flex-start}}

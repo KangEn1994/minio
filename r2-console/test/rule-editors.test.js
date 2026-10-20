@@ -300,6 +300,7 @@ test('unsafe integer JSON is rejected rather than rounded during import',()=>{
 test('while apply is pending, fieldset/import and external draft replacement are blocked',async()=>withAsyncDocument(async()=>{
   const done=deferred();
   const editor=globalThis.RuleEditors.createLifecycleEditor(lifecycle([{id:'a',status:'Disabled',prefix:'',expirationDays:7}]),{onApply:()=>done.promise});
+  const prefix=findInput(editor,'匹配对象前缀');prefix.value='pending/';prefix.dispatch('input');
   const operation=findButton(editor,'检查并应用规则').click();
   assert.equal(editor.isBusy(),true);
   assert.equal(walk(editor.element,e=>e.tagName==='FIELDSET').disabled,true);
@@ -375,6 +376,54 @@ test('simple text changes are refreshed in advanced fields and advanced edits re
   detail.open=false;detail.dispatch('toggle');
   assert.equal(findInput(editor,'资源 ARN 1').value,'arn:aws:s3:::photos/advanced/*');
   assert.equal(editor.getValue().Statement[0].Resource,'arn:aws:s3:::photos/advanced/*');
+}));
+
+test('multi-rule policy presents a compact picker and edits only the selected detail',()=>withDocument(()=>{
+  let applies=0;
+  const statements=['first','second','third'].map(Sid=>({...baseStatement(),Sid}));
+  const editor=globalThis.RuleEditors.createPolicyEditor(policy(statements),{bucket:'photos',onApply:()=>applies++});
+  const all=(predicate)=>{const found=[];const visit=e=>{if(predicate(e))found.push(e);e.children.forEach(child=>{if(typeof child==='object')visit(child);});};visit(editor.element);return found;};
+  const picks=all(e=>e.tagName==='BUTTON'&&Object.hasOwn(e.attrs,'data-rule-index'));
+  assert.equal(picks.length,3);
+  assert.equal(all(e=>e.tagName==='SECTION'&&e.className==='rule-card').length,1);
+  assert.equal(findInput(editor,'规则名称（Sid，可选）').value,'first');
+  picks[2].click();
+  assert.equal(findInput(editor,'规则名称（Sid，可选）').value,'third');
+  assert.equal(all(e=>e.tagName==='SECTION'&&e.className==='rule-card').length,1);
+  assert.equal(editor.isDirty(),false);
+  assert.equal(applies,0);
+  findButton(editor,'返回规则列表').click();
+  assert.equal(findInput(editor,'规则名称（Sid，可选）'),undefined);
+  assert.equal(all(e=>e.tagName==='SECTION'&&e.className==='rule-card').length,0);
+}));
+
+test('lifecycle rule picker keeps edits on the correct rule and never applies on selection',()=>withDocument(()=>{
+  let applies=0;
+  const input=lifecycle([
+    {id:'first',status:'Disabled',prefix:'one/',expirationDays:7},
+    {id:'second',status:'Enabled',prefix:'two/',expirationDays:14}
+  ]);
+  const editor=globalThis.RuleEditors.createLifecycleEditor(input,{onApply:()=>applies++});
+  const second=walk(editor.element,e=>e.tagName==='BUTTON'&&e.attrs['data-rule-index']==='1');
+  assert.ok(second);
+  second.click();
+  const prefix=findInput(editor,'匹配对象前缀');
+  assert.equal(prefix.value,'two/');
+  prefix.value='updated/';prefix.dispatch('input');
+  assert.equal(editor.getValue().rules[0].prefix,'one/');
+  assert.equal(editor.getValue().rules[1].prefix,'updated/');
+  assert.equal(applies,0);
+}));
+
+test('apply is disabled for an unchanged rule and JSON tools are secondary',()=>withDocument(()=>{
+  const editor=globalThis.RuleEditors.createLifecycleEditor(lifecycle());
+  const apply=findButton(editor,'检查并应用规则');
+  assert.equal(apply.disabled,true);
+  const tools=walk(editor.element,e=>e.tagName==='DETAILS'&&e.className==='rule-data-tools');
+  assert.ok(tools);
+  assert.equal(Object.hasOwn(tools.attrs,'open'),false);
+  const prefix=findInput(editor,'匹配对象前缀');prefix.value='edited/';prefix.dispatch('input');
+  assert.equal(apply.disabled,false);
 }));
 
 test('invalid number removed from structured field does not leave permanent export block',()=>withDocument(()=>{

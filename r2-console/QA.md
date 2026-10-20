@@ -1,5 +1,14 @@
 # Verification record
 
+## Focused settings navigation — 2026-10-20
+
+- Replaced the five stacked settings cards with Access permissions, Lifecycle, Multipart cleanup, CORS information and Danger zone links. Only one pane is shown. `section=` in the hash restores the pane on Back/Forward and refresh; invalid values fall back to access permissions. Multipart requests are made only on entry to that pane.
+- Permission and lifecycle editors now show a compact rule list and only one editable detail at a time. The sticky action bar distinguishes an unchanged server-loaded configuration from an unsaved draft; Apply is disabled until a change exists. JSON import/export/copy remain available under secondary controls, and no route or rule selection writes to MinIO.
+- Dirty editor instances are retained per bucket during same-tab navigation, including a switch to another bucket and back. Explicit refresh confirms discard; successful saves invalidate the cached draft; reload/close warns because drafts are not persisted. CORS is informational and Danger zone remains visually isolated.
+- Design references reviewed: [UI UX Pro Max skill](https://github.com/nextlevelbuilder/ui-ux-pro-max-skill/blob/main/.claude/skills/ui-ux-pro-max/SKILL.md), [Vercel web design guidelines](https://github.com/vercel-labs/agent-skills/blob/main/skills/web-design-guidelines/SKILL.md), and [UX/UI agent design review](https://github.com/plugin87/ux-ui-agent-skills/blob/main/.claude/skills/design-review/SKILL.md). Applied task-focused wayfinding, progressive disclosure, visible state and safe recovery without copying third-party code.
+- `npm test`: 107 passed, 0 failed, 3 skipped. The skipped tests require a disposable live MinIO instance, which was not used for this redesign. New mocked-DOM tests cover section URL restoration, focused pane and rule selection, per-bucket draft retention, session isolation, pending-write races, lazy loading, no-write navigation, and clean Apply state. The beforeunload warning was checked in tests, not a real browser close.
+- Desktop cloud-browser walkthrough against a synthetic mock API: opened a direct Lifecycle link, selected the second rule, changed its 7-day expiration to 14 days without applying it, opened Access permissions, then used browser Back. The Lifecycle pane, selected second rule, and unsubmitted 14-day draft were restored. A subsequent mock-only save showed the confirmation dialog, read back the 14-day value, and returned Apply to its disabled clean state; CORS navigation displayed only its unsupported-capability explanation. No real MinIO settings were touched. Narrow-screen behavior was code-reviewed but not tested in an actual mobile viewport.
+
 ## Visual editor update — 2026-10-20
 
 - `npm test`: 93 passed, 0 failed, 3 skipped. Live MinIO integration tests were not rerun in this environment; the three skips are explicit. The historical live run below is not evidence of a new live run.

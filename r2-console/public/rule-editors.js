@@ -140,28 +140,32 @@
     render();return box;
   }
   function createEditor(kind,initial,options={}) {
-    let value=clone(initial),dirty=false,busy=false;const invalidNumbers=new Set();
+    let value=clone(initial),dirty=false,busy=false,selectedIndex=0;const invalidNumbers=new Set();
+    let ruleListRows=[];
     const rootEl=el('div',{class:'visual-rule-editor','data-editor':kind});
     const form=el('fieldset',{class:'rule-form'}),status=el('div',{class:'rule-validation',role:'status'});
     const preview=el('textarea',{class:'code-input generated-json',readonly:'',spellcheck:'false','aria-label':kind==='policy'?'自动生成的策略 JSON':'自动生成的生命周期 JSON'});
     const previewBox=el('details',{class:'json-preview'},el('summary',{text:'查看自动生成的 JSON'}),preview);
     const validate=kind==='policy'?validatePolicyForApply:validateLifecycle;
-    const changed=()=>{dirty=true;refresh();options.onChange?.(clone(value));};
-    changed.numericError=(input,invalid)=>{if(invalid)invalidNumbers.add(input);else invalidNumbers.delete(input);dirty=true;refresh();};
+    const changed=()=>{dirty=true;updateRuleList();refresh();options.onChange?.(clone(value));};
+    changed.numericError=(input,invalid)=>{if(invalid)invalidNumbers.add(input);else invalidNumbers.delete(input);dirty=true;refresh();options.onChange?.(clone(value));};
     const refresh=()=>{
       for(const input of invalidNumbers)if(!rootEl.contains(input))invalidNumbers.delete(input);
       preview.value=JSON.stringify(value,null,2);const errors=validate(value);
-      status.replaceChildren();status.append(el('div',{text:dirty?'有未应用的草稿更改':'当前配置已载入'}));
+      status.className='rule-validation';
+      status.replaceChildren();
       if(invalidNumbers.size)errors.push('请修正无效或超出安全范围的数字。预览保留最后有效值；修正前不能导出或应用。');
       errors.forEach(message=>status.append(el('div',{class:'form-error',text:message})));
-      apply.disabled=busy||errors.length>0;exportButton.disabled=invalidNumbers.size>0;copy.disabled=invalidNumbers.size>0;form.disabled=busy;importButton.disabled=busy;
+      status.hidden=errors.length===0;
+      apply.disabled=busy||!dirty||errors.length>0;exportButton.disabled=invalidNumbers.size>0;copy.disabled=invalidNumbers.size>0;form.disabled=busy;importButton.disabled=busy;
+      saveState.textContent=busy?'正在应用…':dirty?'● 未应用的草稿':'✓ 已载入服务端配置';
     };
     changed.refresh=refresh;
     const exportButton=btn('导出 JSON（不应用）',()=>{
       const blob=new Blob([JSON.stringify(value,null,2)+'\n'],{type:'application/json'});
       const url=URL.createObjectURL(blob);const a=el('a',{href:url,download:`${options.bucket||'bucket'}-${kind}.json`});a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
     });
-    const copy=btn('复制 JSON',async()=>{try{await navigator.clipboard.writeText(JSON.stringify(value,null,2));status.textContent='JSON 已复制，尚未应用到存储桶。';}catch{status.textContent='无法访问剪贴板，请展开 JSON 预览后复制。';}});
+    const copy=btn('复制 JSON',async()=>{try{await navigator.clipboard.writeText(JSON.stringify(value,null,2));status.textContent='JSON 已复制，尚未应用到存储桶。';}catch{status.textContent='无法访问剪贴板，请展开 JSON 预览后复制。';}status.hidden=false;});
     const importInput=el('input',{type:'file',accept:'.json,application/json','aria-label':'导入 JSON 文件'});importInput.hidden=true;
     const importButton=btn('导入 JSON 到草稿',()=>importInput.click());
     let importVersion=0;
@@ -172,15 +176,45 @@
         const next=parseDocument(await file.text(),kind);if(version!==importVersion)return;
         if(dirty&&options.confirmReplace&&!await options.confirmReplace())return;
         if(version!==importVersion)return;value=next;draw();changed();
-      }catch(e){status.textContent=e.message;status.className='rule-validation form-error';}
+      }catch(e){status.textContent=e.message;status.className='rule-validation form-error';status.hidden=false;}
       finally{importInput.value='';}
     });
     const apply=btn(kind==='policy'?'检查并应用策略':'检查并应用规则',async()=>{
-      if(busy||validate(value).length||invalidNumbers.size)return;busy=true;++importVersion;refresh();
+      if(busy||!dirty||validate(value).length||invalidNumbers.size)return;busy=true;++importVersion;refresh();
       try{await options.onApply?.(clone(value));}finally{busy=false;refresh();}
     },'primary');
-    rootEl.append(el('div',{class:'notice',text:'填写表单即可生成 JSON。导入、编辑和导出仅修改草稿；点击“检查并应用”并确认后才会更新存储桶。'}),form,status,
-      el('div',{class:'rule-toolbar'},importButton,exportButton,copy,apply,importInput),previewBox);
+    const saveState=el('span',{class:'rule-save-state','aria-live':'polite'});
+    rootEl.append(el('details',{class:'rule-intro'},el('summary',{text:'编辑与应用说明'}),el('div',{class:'notice',text:'导入、编辑和导出只修改草稿。点击“检查并应用”并确认后，才会更新存储桶配置。'})),
+      el('div',{class:'rule-toolbar'},saveState,apply),
+      el('details',{class:'rule-data-tools'},el('summary',{text:'导入 / 导出 JSON 与复制'}),el('div',{class:'rule-data-actions'},importButton,exportButton,copy,importInput)),status,form,previewBox);
+    function currentRules(){return kind==='policy'?(Array.isArray(value.Statement)?value.Statement:[value.Statement]):value.rules;}
+    function ruleName(rule,index){return kind==='policy'?(rule?.Sid||`权限规则 ${index+1}`):(rule?.id||`过期规则 ${index+1}`);}
+    function ruleSummary(rule){
+      if(!object(rule))return '原始规则 · 请检查配置';
+      if(kind==='lifecycle')return `${rule.status==='Enabled'?'启用':'停用'} · ${rule.prefix?`前缀 ${rule.prefix}`:'整个存储桶'} · ${own(rule,'expirationDate')?`日期 ${rule.expirationDate||'未设置'}`:`${rule.expirationDays??'未设置'} 天`}`;
+      const actions=Array.isArray(rule.Action)?rule.Action:rule.Action?[rule.Action]:[];
+      const resources=Array.isArray(rule.Resource)?rule.Resource:rule.Resource?[rule.Resource]:[];
+      const principal=rule.Principal==='*'?'所有人':rule.Principal?.AWS?'指定用户':'高级主体';
+      return `${rule.Effect==='Deny'?'拒绝':'允许'} · ${principal} · ${actions.length} 项操作 · ${resources.length} 项资源`;
+    }
+    function updateRuleList(){
+      const rules=currentRules();
+      ruleListRows.forEach(({name,summary},i)=>{if(rules[i]!==undefined){name.textContent=ruleName(rules[i],i);summary.textContent=ruleSummary(rules[i]);}});
+    }
+    function rulePicker(items){
+      const list=el('div',{class:'rule-picker','aria-label':kind==='policy'?'权限规则列表':'生命周期规则列表'});
+      list.append(el('div',{class:'rule-picker-heading'},el('strong',{text:kind==='policy'?'权限规则':'过期规则'}),el('span',{text:`共 ${items.length} 条 · 选择一条进行编辑`})));
+      ruleListRows=[];
+      if(!items.length)list.append(el('p',{class:'rule-empty',text:'暂无规则。使用下方按钮添加一条规则。'}));
+      items.forEach((item,index)=>{
+        const name=el('span',{class:'rule-picker-name',text:ruleName(item,index)});
+        const summary=el('span',{class:'rule-picker-summary',text:ruleSummary(item)});
+        const selected=selectedIndex===index;
+        list.append(el('button',{type:'button',class:`rule-picker-item${selected?' active':''}`,'aria-pressed':String(selected),'data-rule-index':String(index),on:{click:()=>{selectedIndex=index;draw();refresh();}}},name,summary));
+        ruleListRows.push({name,summary});
+      });
+      return list;
+    }
     function textField(label,v,update,hint='',type='text') {
       const input=el('input',{type,value:v??'','aria-label':label,on:{input:()=>{if(type==='number'){const n=Number(input.value);const invalid=input.value===''||!Number.isFinite(n)||Number.isInteger(n)&&!Number.isSafeInteger(n);changed.numericError(input,invalid);if(invalid)return;}update(input.value);changed();}}});return field(label,input,hint);
     }
@@ -201,9 +235,11 @@
       form.append(el('div',{class:'rule-grid'},field('策略版本',select([['2012-10-17','2012-10-17（推荐）'],['2008-10-17','2008-10-17']],value.Version,v=>{value.Version=v;changed();},'策略版本')),textField('策略标识（可选）',value.Id,v=>{if(v)put(value,'Id',v);else delete value.Id;})));
       const items=Array.isArray(value.Statement)?value.Statement:[value.Statement];
       if(!Array.isArray(value.Statement))form.append(el('p',{class:'hint',text:'已保留原配置的单条 Statement 对象格式。添加第二条规则时才转换为数组。'}));
+      form.append(rulePicker(items));
       items.forEach((s,index)=>{
+        if(index!==selectedIndex)return;
         const card=el('section',{class:'rule-card'});
-        const title=el('div',{class:'rule-card-head'},el('h3',{text:`权限规则 ${index+1}`}),btn('删除这条规则',()=>{items.splice(index,1);value.Statement=items;draw();changed();},'small danger'));card.append(title);
+        const title=el('div',{class:'rule-card-head'},el('div',{},el('div',{class:'rule-card-kicker',text:`规则 ${index+1} / ${items.length}`}),el('h3',{text:ruleName(s,index)})),el('div',{class:'rule-card-actions'},btn('返回规则列表',()=>{selectedIndex=-1;draw();refresh();},'small'),btn('删除这条规则',()=>{items.splice(index,1);value.Statement=items;selectedIndex=Math.min(index,items.length-1);draw();changed();},'small danger')));card.append(title);
         if(!object(s)){card.append(valueControl(s,v=>{if(Array.isArray(value.Statement))value.Statement[index]=v;else value.Statement=v;},changed,'规则'));form.append(card);return;}
         card.append(el('div',{class:'rule-grid'},textField('规则名称（Sid，可选）',s.Sid,v=>{if(v)put(s,'Sid',v);else delete s.Sid;}),field('允许或拒绝',select([['Allow','允许（Allow）'],['Deny','拒绝（Deny）']],s.Effect,v=>{s.Effect=v;changed();},'允许或拒绝'))));
         const principal=s.Principal;
@@ -255,12 +291,14 @@
         else advanced.append(btn('＋ 添加条件',()=>{s.Condition={StringEquals:{'s3:prefix':['']}};draw();changed();},'small'));
         card.append(advanced);genericExtra(card,s,['Sid','Effect','Principal','NotPrincipal','Action','NotAction','Resource','NotResource','Condition'],'其他原始字段（完整保留）');form.append(card);
       });
-      form.append(btn('＋ 添加权限规则',()=>{items.push({Sid:'',Effect:'Allow',Principal:{AWS:['']},Action:['s3:GetObject'],Resource:[`arn:aws:s3:::${options.bucket||'bucket'}/*`]});value.Statement=items;draw();changed();}));
+      form.append(btn('＋ 添加权限规则',()=>{items.push({Sid:'',Effect:'Allow',Principal:{AWS:['']},Action:['s3:GetObject'],Resource:[`arn:aws:s3:::${options.bucket||'bucket'}/*`]});value.Statement=items;selectedIndex=items.length-1;draw();changed();}));
       genericExtra(form,value,['Version','Id','Statement'],'其他策略字段（完整保留）');
     }
     function drawLifecycle(){
+      form.append(rulePicker(value.rules));
       value.rules.forEach((r,index)=>{
-        const card=el('section',{class:'rule-card'});card.append(el('div',{class:'rule-card-head'},el('h3',{text:`过期规则 ${index+1}`}),btn('删除这条规则',()=>{value.rules.splice(index,1);draw();changed();},'small danger')));
+        if(index!==selectedIndex)return;
+        const card=el('section',{class:'rule-card'});card.append(el('div',{class:'rule-card-head'},el('div',{},el('div',{class:'rule-card-kicker',text:`规则 ${index+1} / ${value.rules.length}`}),el('h3',{text:ruleName(r,index)})),el('div',{class:'rule-card-actions'},btn('返回规则列表',()=>{selectedIndex=-1;draw();refresh();},'small'),btn('删除这条规则',()=>{value.rules.splice(index,1);selectedIndex=Math.min(index,value.rules.length-1);draw();changed();},'small danger'))));
         if(!object(r)){card.append(valueControl(r,v=>value.rules[index]=v,changed,'规则'));form.append(card);return;}
         card.append(el('div',{class:'rule-grid'},textField('规则名称',r.id,v=>r.id=v),field('规则状态',select([['Disabled','停用'],['Enabled','启用：会自动删除匹配对象']],r.status,v=>{r.status=v;changed();},'规则状态'))));
         card.append(textField('匹配对象前缀',r.prefix,v=>r.prefix=v,'留空匹配整个桶；例如 logs/ 仅匹配此前缀。空格是对象名称的一部分，不会自动删除。'));
@@ -272,12 +310,12 @@
         genericExtra(card,r,['id','status','prefix','expirationDays','expirationDate'],'服务端不支持的原始字段（保留导出，阻止应用）');form.append(card);
       });
       if(!value.rules.length)form.append(el('p',{class:'rule-empty',text:'暂无过期规则。添加规则后可以逐条设置范围、启用状态和过期时间。'}));
-      form.append(btn('＋ 添加过期规则',()=>{let n=value.rules.length+1;while(value.rules.some(r=>r?.id==='rule-'+n))n++;value.rules.push({id:'rule-'+n,status:'Disabled',prefix:'',expirationDays:30});draw();changed();}));
+      form.append(btn('＋ 添加过期规则',()=>{let n=value.rules.length+1;while(value.rules.some(r=>r?.id==='rule-'+n))n++;value.rules.push({id:'rule-'+n,status:'Disabled',prefix:'',expirationDays:30});selectedIndex=value.rules.length-1;draw();changed();}));
       genericExtra(form,value,['rules'],'其他导入字段（保留导出，阻止应用）');
     }
-    function draw(){invalidNumbers.clear();form.replaceChildren();if(kind==='policy')drawPolicy();else drawLifecycle();}
+    function draw(){invalidNumbers.clear();form.replaceChildren();const count=currentRules().length;if(selectedIndex>=count)selectedIndex=count-1;if(kind==='policy')drawPolicy();else drawLifecycle();}
     draw();refresh();
-    return {element:rootEl,getValue:()=>clone(value),isDirty:()=>dirty,isBusy:()=>busy,setValue(next){if(busy)return false;value=clone(next);dirty=true;draw();refresh();return true;},validate:()=>validate(value)};
+    return {element:rootEl,getValue:()=>clone(value),isDirty:()=>dirty,isBusy:()=>busy,setValue(next){if(busy)return false;value=clone(next);dirty=true;draw();refresh();options.onChange?.(clone(value));return true;},validate:()=>validate(value)};
   }
   root.RuleEditors={clone,parseDocument,validatePolicy,validatePolicyForApply,validateLifecycle,
     createPolicyEditor:(value,options)=>createEditor('policy',value,options),
